@@ -6,9 +6,12 @@
 - app label -> "Subway tools"
 - versionName -> "1.0.0A" (the letter-suffix version the user uses, same
   style as iOS 1.1.0B; pubspec keeps the semver core 1.0.0+1)
-- AGP pinned to 8.9.3 in settings.gradle.kts: flutter_inappwebview_android
-  1.1.3 calls getDefaultProguardFile('proguard-android.txt'), which the
-  newest AGP removed (first CI build failed evaluating that project).
+- AGP is deliberately NOT pinned here: flutter_inappwebview_android
+  1.1.3 calls getDefaultProguardFile('proguard-android.txt'), which
+  AGP 9 removed (CI build #1), while the newest Flutter requires
+  AGP >= 9.1.1 (CI build #2, rejecting an 8.9.3 pin). The consistent
+  combination is the older toolchain pinned in the workflow
+  (Flutter 3.35.7, whose template AGP 8.7.x still has that API).
 - <queries> for the store schemes (mimarket / oppomarket / vivomarket /
   market), so Android 11+ package visibility lets the shell open the
   phone's app store for the transit-app jump.
@@ -43,16 +46,6 @@ if "versionName" not in new:
         1,
     )
 gradle.write_text(new, encoding="utf-8")
-
-settings = root / "settings.gradle.kts"
-stext = settings.read_text(encoding="utf-8")
-stext, n_agp = re.subn(
-    r'(id\("com\.android\.application"\)\s+version\s+")[^"]+(")',
-    r"\g<1>8.9.3\g<2>",
-    stext,
-)
-assert n_agp == 1, "AGP version pattern not found in settings.gradle.kts"
-settings.write_text(stext, encoding="utf-8")
 
 manifest = root / "app" / "src" / "main" / "AndroidManifest.xml"
 mtext = manifest.read_text(encoding="utf-8")
