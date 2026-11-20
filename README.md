@@ -31,6 +31,14 @@ Flutter Android version of Subway tools (the iOS version lives in
   time (`tools/strip_apple_features.py`); the iOS repo is untouched.
 - No native per-city splash, Siri, Live Activities or native settings
   screens. Nearby stations use HTML5 geolocation in the WebView.
+- The transit-app jump (打开一卡通 / 盛京通 / 深圳地铁 …) opens the app in
+  the phone's own app store instead of the Apple App Store: Xiaomi →
+  `mimarket://`, OPPO → `oppomarket://` (parameter `packagename`),
+  vivo → `vivomarket://`, other brands → the generic `market://`
+  intent, with an 应用宝 web page as last fallback. The page's App Store
+  fallback is patched to call the shell at packaging time; Apple-id →
+  Android package mapping lives in `lib/main.dart` (`_transitPackages`),
+  every package name verified against a real store/listing page.
 - The release APK from CI is signed with the debug key (the Flutter
   template default), which is fine for sideload testing.
 

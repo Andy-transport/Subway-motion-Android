@@ -23,10 +23,12 @@
 import 'dart:collection';
 import 'dart:ui';
 
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 const int _serverPort = 8080;
 
@@ -87,6 +89,29 @@ const Map<String, Color> _cityAccents = {
   'qd': Color(0xFF317C5B),
 };
 
+// Transit-app store jump: the web page's openTransitApp() knows each
+// city's transit app by its Apple App Store id; the Android build patches
+// its fallback to call the shell's 'openStore' handler with that id
+// (tools/strip_apple_features.py). Apple id -> Android package name.
+// Every package name was verified against a real store / listing page on
+// 2026-11-20 (Xiaomi store, APKPure, 360, listing mirrors) - do not add
+// or change one without a source. Chengdu note: cderg.cocc.cocc_cdids is
+// the official 成都地铁; com.zhongren.metrochengdu is a third-party app.
+const Map<String, String> _transitPackages = {
+  '1071038870': 'cn.com.bmac.nfc', // 北京一卡通
+  '1441271928': 'com.nsmetro.shengjingtong', // 盛京通
+  '1202750238': 'com.app.shanghai.metro', // Metro大都会
+  '1448467024': 'com.bm.nfccitycard', // 哈尔滨城市通
+  '1383655806': 'com.dlmetro.app', // 大连交通e出行
+  '6503238645': 'com.bwton.msx.jinhuametro', // 任我行 (金华)
+  '1474201266': 'com.bwton.msx.czb', // 常州地铁
+  '1491110313': 'com.bwton.msx.cqb', // 渝畅行
+  '1481796811': 'com.bwton.msx.ccb', // 长春E出行
+  '848926994': 'com.iss.shenzhenmetro', // 深圳地铁
+  '1303414976': 'cderg.cocc.cocc_cdids', // 成都地铁
+  '1373547573': 'com.sdjictec.qdmetro', // 青岛地铁
+};
+
 String _systemLangCode() {
   final locale = PlatformDispatcher.instance.locale;
   if (locale.languageCode == 'zh') {
@@ -144,6 +169,51 @@ window.webkit.messageHandlers = window.webkit.messageHandlers || {};
     await _web?.evaluateJavascript(
       source: "window.metroApp && window.metroApp.setTab('$key')",
     );
+  }
+
+  // Open the transit app (by Apple id from the web page) in this phone's
+  // own app store: Xiaomi -> mimarket://, OPPO -> oppomarket:// (its
+  // parameter is `packagename`, not `id`), vivo -> vivomarket://, any
+  // other brand -> the generic market:// intent, which the phone's
+  // default store answers. If the vendor scheme fails, fall back to the
+  // generic market intent, then to the app's 应用宝 web page.
+  Future<void> _openStore(String appleId) async {
+    final pkg = _transitPackages[appleId];
+    if (pkg == null) return;
+    var brand = '';
+    try {
+      final info = await DeviceInfoPlugin().androidInfo;
+      brand = '${info.brand} ${info.manufacturer}'.toLowerCase();
+    } catch (_) {}
+    final candidates = <String>[];
+    if (brand.contains('xiaomi') ||
+        brand.contains('redmi') ||
+        brand.contains('poco')) {
+      candidates.add('mimarket://details?id=$pkg');
+    } else if (brand.contains('oppo') ||
+        brand.contains('realme') ||
+        brand.contains('oneplus')) {
+      candidates.add('oppomarket://details?packagename=$pkg');
+    } else if (brand.contains('vivo') || brand.contains('iqoo')) {
+      candidates.add('vivomarket://details?id=$pkg');
+    }
+    candidates.add('market://details?id=$pkg');
+    for (final url in candidates) {
+      try {
+        if (await launchUrl(
+          Uri.parse(url),
+          mode: LaunchMode.externalApplication,
+        )) {
+          return;
+        }
+      } catch (_) {}
+    }
+    try {
+      await launchUrl(
+        Uri.parse('https://sj.qq.com/appdetail/$pkg'),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {}
   }
 
   Future<bool> _handleBack() async {
@@ -235,6 +305,15 @@ window.webkit.messageHandlers = window.webkit.messageHandlers || {};
                       if (d is bool && d != _dark) {
                         setState(() => _dark = d);
                       }
+                    }
+                    return null;
+                  },
+                );
+                controller.addJavaScriptHandler(
+                  handlerName: 'openStore',
+                  callback: (args) {
+                    if (args.isNotEmpty) {
+                      _openStore(args.first.toString());
                     }
                     return null;
                   },

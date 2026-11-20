@@ -12,6 +12,10 @@ source repo is never modified):
   2. Replace the displayed app version with the Android version
      (ANDROID_VERSION below). The web core hardcodes the iOS version in
      its About / What's New spots; Android shows its own.
+  3. Store jump: openTransitApp()'s browser fallback opens the Apple
+     App Store page. Replace it with a call to the Flutter shell's
+     'openStore' handler, which opens the same transit app in the
+     phone's own app store (Xiaomi / OPPO / vivo / default store).
 
 Fails loudly if an expected block is not found, so a future web-core
 change cannot silently ship the Siri UI or the iOS version again.
@@ -77,9 +81,15 @@ assert val != -1, "What's New row value not found"
 end = html.find("</span>", val)
 html = html[:val] + '<span class="more-row-value">' + ANDROID_VERSION + html[end:]
 
+# 4. Store jump -> Flutter 'openStore' handler (see header, item 3).
+old_open = "window.open('https://apps.apple.com/cn/app/id' + id, '_blank');"
+new_open = "if (window.flutter_inappwebview) { window.flutter_inappwebview.callHandler('openStore', id); }"
+assert html.count(old_open) == 1, "openTransitApp App Store fallback not found exactly once"
+html = html.replace(old_open, new_open)
+
 path.write_text(html, encoding="utf-8")
 print(
-    "strip_apple_features: Siri row + sub-page removed, version set to",
+    "strip_apple_features: Siri row + sub-page removed, store jump patched, version set to",
     ANDROID_VERSION,
     f"({n_v} bindings + badge + row) in",
     path,
