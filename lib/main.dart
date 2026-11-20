@@ -32,13 +32,26 @@ import 'package:url_launcher/url_launcher.dart';
 
 const int _serverPort = 8080;
 
+// Set by main(): if the localhost server cannot start on this device
+// (port clash, socket restrictions on some ROMs), the WebView falls
+// back to loading the bundled page directly from assets - the page is
+// fully self-contained, so everything except relative fetch() still
+// works. An unhandled throw here would kill the app before runApp,
+// which is exactly the "tap the icon and it just dies" failure.
+bool _serverOk = false;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final server = InAppLocalhostServer(
-    documentRoot: 'assets/web',
-    port: _serverPort,
-  );
-  await server.start();
+  try {
+    final server = InAppLocalhostServer(
+      documentRoot: 'assets/web',
+      port: _serverPort,
+    );
+    await server.start();
+    _serverOk = true;
+  } catch (_) {
+    _serverOk = false;
+  }
   runApp(const SubwayToolsApp());
 }
 
@@ -135,6 +148,7 @@ class _HomePageState extends State<HomePage> {
   String _lang = _systemLangCode();
   Color _accent = _cityAccents['bj']!;
   bool _loaded = false;
+  int _loadRetries = 0;
 
   int get _langIndex => _lang == 'zh-Hant' ? 1 : (_lang == 'en' ? 2 : 0);
 
@@ -249,9 +263,12 @@ window.webkit.messageHandlers = window.webkit.messageHandlers || {};
         body: Stack(
           children: [
             InAppWebView(
-              initialUrlRequest: URLRequest(
-                url: WebUri('http://localhost:$_serverPort/index.html'),
-              ),
+              initialUrlRequest: _serverOk
+                  ? URLRequest(
+                      url: WebUri('http://localhost:$_serverPort/index.html'),
+                    )
+                  : null,
+              initialFile: _serverOk ? null : 'assets/web/index.html',
               initialUserScripts: UnmodifiableListView<UserScript>([
                 UserScript(
                   source: _shimSource,
@@ -347,15 +364,22 @@ window.webkit.messageHandlers = window.webkit.messageHandlers || {};
               },
               onReceivedError: (controller, request, error) {
                 // The page is fully offline; a failed main-frame load is
-                // retried once (localhost server warm-up race).
-                if (request.isForMainFrame ?? false) {
-                  controller.loadUrl(
-                    urlRequest: URLRequest(
-                      url: WebUri(
-                        'http://localhost:$_serverPort/index.html',
+                // retried at most twice (localhost warm-up race), then we
+                // fall back to the bundled asset file instead of looping.
+                if ((request.isForMainFrame ?? false) && _serverOk) {
+                  _loadRetries++;
+                  if (_loadRetries <= 2) {
+                    controller.loadUrl(
+                      urlRequest: URLRequest(
+                        url: WebUri(
+                          'http://localhost:$_serverPort/index.html',
+                        ),
                       ),
-                    ),
-                  );
+                    );
+                  } else {
+                    _serverOk = false;
+                    controller.loadFile(assetFilePath: 'assets/web/index.html');
+                  }
                 }
               },
             ),
