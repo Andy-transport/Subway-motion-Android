@@ -16,3 +16,7 @@ rm -rf lib
 mv /tmp/app-lib lib
 mv /tmp/app-pubspec.yaml pubspec.yaml
 python3 tools/patch_android.py
+# Launcher icons from the user's artwork (tools/icon_master.b64).
+python3 -m pip install --break-system-packages --quiet pillow 2>/dev/null \
+  || python3 -m pip install --user --quiet pillow
+python3 tools/make_icons.py
