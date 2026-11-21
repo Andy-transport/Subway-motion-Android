@@ -282,7 +282,7 @@ window.webkit.messageHandlers = window.webkit.messageHandlers || {};
                 domStorageEnabled: true,
                 databaseEnabled: true,
                 geolocationEnabled: true,
-                useHybridComposition: false,
+                useHybridComposition: true,
                 supportZoom: false,
                 builtInZoomControls: false,
                 displayZoomControls: false,
