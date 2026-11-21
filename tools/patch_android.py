@@ -42,7 +42,7 @@ assert n2 == 1, "applicationId pattern not found in app gradle file"
 if "versionName" not in new:
     new = new.replace(
         'applicationId = "com.andytransport.metro"',
-        'applicationId = "com.andytransport.metro"\n        versionName = "1.0.0A"',
+        'applicationId = "com.andytransport.metro"\n        versionName = "1.0.0test3"',
         1,
     )
 gradle.write_text(new, encoding="utf-8")
