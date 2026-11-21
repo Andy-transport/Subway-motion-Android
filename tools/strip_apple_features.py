@@ -63,18 +63,26 @@ html = remove_balanced(html, '<div class="more-sub" v-show="showSiriSub">')
 assert "showSiriSub = true" not in html, "Siri row still present"
 assert 'v-show="showSiriSub"' not in html, "Siri sub-page still present"
 
-# 3. Displayed version -> Android version. Three spots use the
-# {v: '...'} binding (About rows + What's New title); the What's New
-# row value and the What's New version badge carry it as plain text.
-html, n_v = re.subn(r"\{v: '[^']+'\}", "{v: '" + ANDROID_VERSION + "'}", html)
-assert n_v >= 3, f"expected >=3 version bindings, found {n_v}"
-html, n_badge = re.subn(
-    r'(<span class="more-new-ver">)[^<]+(</span>)',
-    r"\g<1>" + ANDROID_VERSION + r"\g<2>",
-    html,
+# 3. Displayed version -> Android version. Since 26C100 the version is an
+# inline tap-to-expand ternary in two spots (settings appver + About):
+#   verFull ? 'v1.1.0 (26C101)' : '1.1.0'
+# Android's version is a single string, so collapse the ternary to it.
+# (The releaseNotes changelog keeps the shared product history as-is.)
+html, n_v = re.subn(
+    r"verFull \? 'v[^']+' : '[^']+'", "'" + ANDROID_VERSION + "'", html
 )
-assert n_badge == 1, f"expected 1 What's New badge, found {n_badge}"
-row = html.find('@click="showWhatsNewSub = true"')
+assert n_v == 2, f"expected 2 version ternaries, found {n_v}"
+# The What's New detail view renders releaseNotes[relSel].v as its heading
+# (the old static badge span no longer exists), so retitle only the FIRST
+# (latest) changelog entry to the Android version; its lines describe the
+# shared update content, which Android syncs, so they stay.
+rn = html.find("releaseNotes")
+assert rn != -1, "releaseNotes not found"
+head, tail = html[:rn], html[rn:]
+tail, n_top = re.subn(r"\{ v: '[^']+'", "{ v: '" + ANDROID_VERSION + "'", tail, count=1)
+assert n_top == 1, "latest releaseNotes entry not retitled"
+html = head + tail
+row = html.find("showWhatsNewSub = true")
 assert row != -1, "What's New row not found"
 val = html.find('<span class="more-row-value">', row)
 assert val != -1, "What's New row value not found"
@@ -91,6 +99,6 @@ path.write_text(html, encoding="utf-8")
 print(
     "strip_apple_features: Siri row + sub-page removed, store jump patched, version set to",
     ANDROID_VERSION,
-    f"({n_v} bindings + badge + row) in",
+    f"({n_v} ternaries + changelog head + row) in",
     path,
 )

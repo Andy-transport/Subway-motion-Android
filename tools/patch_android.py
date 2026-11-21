@@ -47,6 +47,22 @@ if "versionName" not in new:
     )
 gradle.write_text(new, encoding="utf-8")
 
+# Disable R8 minify/shrink for release. R8 ran on the scaffolded project
+# and, combined with the MainActivity package mismatch below, stripped the
+# launcher activity and most of the Flutter embedding out of the APK
+# (builds #3-#6: installs fine, crashes instantly, no UI). Even with the
+# package fixed, this sideloaded app gains nothing from shrinking.
+if "isMinifyEnabled" not in new and gradle.suffix == ".kts":
+    pat = 'signingConfig = signingConfigs.getByName("debug")'
+    if pat in new:
+        new = new.replace(
+            pat,
+            pat + "\n            isMinifyEnabled = false\n            isShrinkResources = false",
+            1,
+        )
+        gradle.write_text(new, encoding="utf-8")
+        print("patch_android: release minify/shrink disabled")
+
 manifest = root / "app" / "src" / "main" / "AndroidManifest.xml"
 mtext = manifest.read_text(encoding="utf-8")
 queries = (
@@ -63,7 +79,7 @@ queries = (
 )
 if "<queries>" not in mtext:
     mtext = mtext.replace("<application", queries + "    <application", 1)
-mtext, n3 = re.subn(r'android:label="[^"]*"', 'android:label="Subway tools"', mtext)
+mtext, n3 = re.subn(r'android:label="[^"]*"', 'android:label="城轨通"', mtext)
 assert n3 == 1, "android:label pattern not found in manifest"
 perms = (
     '    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>\n'
@@ -89,3 +105,29 @@ if "ImpellerEnabled" not in mtext:
     assert n4 == 1, "flutterEmbedding meta-data not found in manifest"
 manifest.write_text(mtext, encoding="utf-8")
 print("patch_android: applicationId, label and permissions set")
+
+# --- MainActivity package fix (THE launch-crash root cause) ---
+# flutter create --org com.andytransport generates MainActivity.kt under
+# package com.andytransport.subway_tools, but namespace/applicationId were
+# rewritten to com.andytransport.metro above, so the merged manifest's
+# ".MainActivity" expands to com.andytransport.metro.MainActivity - a class
+# that does not exist. R8 then treats the real MainActivity (and the
+# embedding it alone references) as dead code and strips it: the shipped
+# APKs contained NO MainActivity and NO FlutterActivity at all, so Android
+# died with ClassNotFound the instant the launcher was tapped.
+kt_root = root / "app" / "src" / "main" / "kotlin"
+found = list(kt_root.rglob("MainActivity.kt"))
+assert len(found) == 1, f"expected exactly 1 MainActivity.kt, found {found}"
+src = found[0]
+ktext = src.read_text(encoding="utf-8")
+ktext, n_pkg = re.subn(
+    r"^package\s+\S+", "package com.andytransport.metro", ktext, count=1, flags=re.M
+)
+assert n_pkg == 1, "MainActivity package line not rewritten"
+dest_dir = kt_root / "com" / "andytransport" / "metro"
+dest_dir.mkdir(parents=True, exist_ok=True)
+dest = dest_dir / "MainActivity.kt"
+dest.write_text(ktext, encoding="utf-8")
+if dest.resolve() != src.resolve():
+    src.unlink()
+print("patch_android: MainActivity moved to com.andytransport.metro")
