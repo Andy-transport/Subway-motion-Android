@@ -87,6 +87,7 @@ perms = (
 )
 if "ACCESS_FINE_LOCATION" not in mtext:
     mtext = mtext.replace("<application", perms + "    <application", 1)
+manifest.write_text(mtext, encoding="utf-8")
 print("patch_android: applicationId, label and permissions set")
 
 # --- MainActivity package fix (THE launch-crash root cause) ---
