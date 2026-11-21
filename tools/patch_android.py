@@ -87,23 +87,6 @@ perms = (
 )
 if "ACCESS_FINE_LOCATION" not in mtext:
     mtext = mtext.replace("<application", perms + "    <application", 1)
-# Disable Impeller (builds #3/#4 died instantly on the user's Xiaomi 13 /
-# HyperOS 3.0 before the first frame; the Skia/OpenGL fallback is the
-# standard workaround for Vulkan-driver launch crashes). The meta-data
-# belongs inside MainActivity, next to the flutterEmbedding meta-data.
-impeller = (
-    '\n            <meta-data\n'
-    '                android:name="io.flutter.embedding.android.ImpellerEnabled"\n'
-    '                android:value="false" />'
-)
-if "ImpellerEnabled" not in mtext:
-    mtext, n4 = re.subn(
-        r'(android:name="flutterEmbedding"\s*\n\s*android:value="2"\s*/>)',
-        r"\1" + impeller,
-        mtext,
-    )
-    assert n4 == 1, "flutterEmbedding meta-data not found in manifest"
-manifest.write_text(mtext, encoding="utf-8")
 print("patch_android: applicationId, label and permissions set")
 
 # --- MainActivity package fix (THE launch-crash root cause) ---
