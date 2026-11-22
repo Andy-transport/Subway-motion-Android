@@ -16,6 +16,16 @@ if [ ! -d "$SRC/web" ]; then
   git clone --depth 1 --branch "$BRANCH" https://github.com/Andy-transport/Subway-motion.git "$SRC"
 fi
 
+# Android ships WITHOUT the Structure feature (user, 2026-11-22), and
+# its diagram data is stripped from the page anyway - so drop the
+# structure index from this throwaway clone before the offline build.
+# build_offline.py treats a missing index as empty data, which also
+# makes this build immune to the test branch's structure-image push
+# state (run #16 failed on a mid-push index referencing images whose
+# .b64 files had not been pushed yet). The source repo is never
+# modified; this only touches the local clone.
+rm -f "$SRC/web/structure/index.json"
+
 (cd "$SRC/web" && python3 build_offline.py)
 
 mkdir -p assets/web

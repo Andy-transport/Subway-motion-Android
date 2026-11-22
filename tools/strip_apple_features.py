@@ -22,7 +22,9 @@ source repo is never modified):
      STRUCTURE_INDEX data (station diagrams, ~20 MB of base64 - the
      page code reads it through `window.STRUCTURE_INDEX || {}` guards,
      so an empty object is safe), and the two changelog lines that
-     advertise the feature.
+     advertise the feature. (prepare_web.sh already drops the
+     structure index before the offline build, so the data normally
+     never reaches this script; emptying here is the safety net.)
   6. Bake the native-bridge shim into the page, right after <head> so
      it runs before every page script. The shell is the official
      webview_flutter (flutter_inappwebview never attached on the
@@ -175,7 +177,11 @@ def empty_assignment(text: str, marker: str) -> tuple[str, int]:
 html, n_idx = empty_assignment(html, "window.STRUCTURE_INDEX = ")
 html, n_imgs = empty_assignment(html, "window.STRUCTURE_IMGS = ")
 removed_bytes = n_idx + n_imgs
-assert n_imgs > 1_000_000, f"STRUCTURE_IMGS suspiciously small: {n_imgs}"
+# No size assert on the emptied data: prepare_web.sh drops the
+# structure index before the offline build, so both objects normally
+# arrive already empty. empty_assignment() above still asserts each
+# assignment exists and is replaced, which is the invariant that
+# matters here.
 # Changelog lines that advertise the removed feature (one physical
 # line each in the built page; length-guarded so a future minified
 # layout fails loudly instead of eating the script).
