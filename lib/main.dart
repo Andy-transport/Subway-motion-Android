@@ -272,13 +272,15 @@ class _HomePageState extends State<HomePage> {
           type: wantImage ? FileType.image : FileType.any,
           allowMultiple: params.mode == FileSelectorMode.openMultiple,
         );
-        if (result == null) return null;
+        // The plugin's callback type is Future<List<String>> (not
+        // nullable): an empty list is the cancel signal.
+        if (result == null) return <String>[];
         final uris = <String>[];
         for (final file in result.files) {
           final path = file.path;
           if (path != null) uris.add(Uri.file(path).toString());
         }
-        return uris.isEmpty ? null : uris;
+        return uris;
       });
     }
     _web.loadFlutterAsset('assets/web/index.html');
@@ -498,20 +500,16 @@ class _GlassTabBar extends StatelessWidget {
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(32),
-          child: BackdropFilter(
-            filter: ImageFilter.compose(
-              outer: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-              inner: const ColorFilter.matrix(<double>[
-                1.15, 0, 0, 0, 0, //
-                0, 1.15, 0, 0, 0, //
-                0, 0, 1.15, 0, 0, //
-                0, 0, 0, 1, 0, //
-              ]),
-            ),
-            child: Container(
+          // Load reduction (2026-11-22): no BackdropFilter here. The
+          // live blur re-sampled the WebView backdrop on every frame
+          // the map moved - a steady GPU tax that contributed to the
+          // freeze on the user's low-end phone. A near-opaque
+          // translucent fill keeps the floating-bar look at a
+          // fraction of the cost.
+          child: Container(
               height: 62,
               decoration: BoxDecoration(
-                color: tint.withValues(alpha: dark ? 0.62 : 0.58),
+                color: tint.withValues(alpha: 0.88),
                 borderRadius: BorderRadius.circular(32),
                 border: Border.all(
                   color: Colors.white.withValues(alpha: dark ? 0.22 : 0.55),
@@ -557,7 +555,6 @@ class _GlassTabBar extends StatelessWidget {
                 ],
               ),
             ),
-          ),
         ),
       ),
     );
