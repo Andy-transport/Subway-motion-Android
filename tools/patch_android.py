@@ -90,6 +90,20 @@ perms = (
 )
 if "ACCESS_FINE_LOCATION" not in mtext:
     mtext = mtext.replace("<application", perms + "    <application", 1)
+# Round-3 white-screen experiment (2026-11-22): on the user's phones
+# the WebView platform view never attached under the default Impeller
+# renderer - onWebViewCreated never fired in either composition mode,
+# across two devices, while plain Flutter widgets rendered fine.
+# Disable Impeller (Skia fallback) to test the renderer as the cause.
+# NOTE: the pre-crash-fix builds that "tested" this never launched at
+# all (missing MainActivity), so it has never actually been tried.
+if "EnableImpeller" not in mtext:
+    mtext = mtext.replace(
+        "</application>",
+        '        <meta-data android:name="io.flutter.embedding.android.EnableImpeller" android:value="false"/>\n'
+        "    </application>",
+        1,
+    )
 manifest.write_text(mtext, encoding="utf-8")
 print("patch_android: applicationId, label and permissions set")
 

@@ -13,6 +13,10 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_inappwebview: ^6.1.5
+  # Round-3 white-screen differential test: the official WebView side
+  # by side with flutter_inappwebview (see lib/main.dart). Kept only if
+  # it wins on the user's devices.
+  webview_flutter: ^4.10.0
   permission_handler: ^11.3.1
   url_launcher: ^6.3.1
   device_info_plus: ^11.3.0

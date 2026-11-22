@@ -16,6 +16,13 @@ source repo is never modified):
      App Store page. Replace it with a call to the Flutter shell's
      'openStore' handler, which opens the same transit app in the
      phone's own app store (Xiaomi / OPPO / vivo / default store).
+  5. Remove the Structure feature (user, 2026-11-22: Android syncs the
+     iOS test version's other updates, but Structure is not added):
+     the web tab-bar entry, the #structurePanel block, the embedded
+     STRUCTURE_INDEX data (station diagrams, ~20 MB of base64 - the
+     page code reads it through `window.STRUCTURE_INDEX || {}` guards,
+     so an empty object is safe), and the two changelog lines that
+     advertise the feature.
 
 Fails loudly if an expected block is not found, so a future web-core
 change cannot silently ship the Siri UI or the iOS version again.
@@ -102,10 +109,73 @@ new_open = "if (window.flutter_inappwebview) { window.flutter_inappwebview.callH
 assert html.count(old_open) == 1, "openTransitApp App Store fallback not found exactly once"
 html = html.replace(old_open, new_open)
 
+# 5. Structure feature removal (see header, item 5).
+# Web tab-bar entry - the click target occurs exactly once.
+assert html.count('setTab(\'structure\')') == 1, "structure tab entry not found exactly once"
+html = remove_balanced(
+    html, '<div class="tab" :class="{ active: tab===\'structure\' }"'
+)
+# The panel itself. (CSS rules and querySelector('#structurePanel')
+# references remain in the page; they are dead once the element is
+# gone, so the assert checks the DOM id, not the bare word.)
+html = remove_balanced(html, '<div id="structurePanel"')
+assert 'id="structurePanel"' not in html, "structure panel still present"
+assert "setTab('structure')" not in html, "structure tab still present"
+# The embedded station-diagram data: two assignments - STRUCTURE_INDEX
+# (station -> image file names + sources, ~18 KB) and STRUCTURE_IMGS
+# (file name -> data URI, ~20 MB). Replace both objects with an empty
+# object; the page code reads them via `window.X || {}` guards, and
+# with the panel gone the data is unreachable anyway. JSON-aware brace
+# scan: strings may contain braces, base64 payloads contain no quotes.
+def empty_assignment(text: str, marker: str) -> tuple[str, int]:
+    i = text.find(marker)
+    assert i != -1, f"{marker} assignment not found"
+    j = text.find("{", i)
+    assert j != -1, f"{marker} object start not found"
+    depth = 0
+    k = j
+    in_str = False
+    esc = False
+    while k < len(text):
+        c = text[k]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        k += 1
+    assert depth == 0 and k < len(text), f"{marker} object not closed"
+    return text[:j] + "{}" + text[k + 1:], k + 1 - j
+
+
+html, n_idx = empty_assignment(html, "window.STRUCTURE_INDEX = ")
+html, n_imgs = empty_assignment(html, "window.STRUCTURE_IMGS = ")
+removed_bytes = n_idx + n_imgs
+assert n_imgs > 1_000_000, f"STRUCTURE_IMGS suspiciously small: {n_imgs}"
+# Changelog lines that advertise the removed feature (one physical
+# line each in the built page; length-guarded so a future minified
+# layout fails loudly instead of eating the script).
+for frag in ("「结构」栏目", "结构详情页配备"):
+    lines = html.split("\n")
+    hits = [ln for ln in lines if frag in ln]
+    assert len(hits) == 1 and len(hits[0]) < 5000, f"changelog line not unique/short: {frag}"
+    html = "\n".join(ln for ln in lines if frag not in ln)
+    assert frag not in html, f"changelog line still present: {frag}"
+
 path.write_text(html, encoding="utf-8")
 print(
     "strip_apple_features: Siri row + sub-page removed, store jump patched, version set to",
     ANDROID_VERSION,
-    f"({n_v} ternaries + changelog head + row) in",
+    f"({n_v} ternaries + changelog head + row), structure removed (index data {removed_bytes} bytes) in",
     path,
 )

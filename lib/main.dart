@@ -33,6 +33,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 Future<void> main() async {
@@ -68,10 +69,10 @@ const List<_TabSpec> _tabs = [
   _TabSpec('map', Icons.map_outlined, ['线路图', '線路圖', 'Map']),
   _TabSpec('stations', Icons.search, ['车站', '車站', 'Stations']),
   _TabSpec('timetable', Icons.schedule, ['时刻表', '時刻表', 'Timetable']),
-  // Structure tab: synced from the iOS test version (same position,
-  // between Timetable and More). The panel itself is fully web-side;
-  // the shell only mirrors the tab, like the other five.
-  _TabSpec('structure', Icons.view_in_ar, ['结构', '結構', 'Structure']),
+  // No Structure tab on Android (user, 2026-11-22): the iOS test
+  // version has it, but Android stays at five tabs; the structure
+  // panel and its image data are stripped from the page at packaging
+  // time (tools/strip_apple_features.py, item 5).
   _TabSpec('more', Icons.settings_outlined, ['更多', '更多', 'More']),
 ];
 
@@ -140,14 +141,18 @@ class _HomePageState extends State<HomePage> {
   Color _accent = _cityAccents['bj']!;
   bool _loaded = false;
 
-  // --- White-screen diagnostics (temporary build, round 2) ---
-  // Round 1 on device proved: the localhost server start() hangs, AND
-  // with hybrid composition the WebView's onWebViewCreated never fired
-  // at all - no load start, no error, just the spinner. Round 2 loads
-  // the bundled file directly and uses virtual-display mode
-  // (useHybridComposition: false); every step is written to an
-  // on-screen log so a stuck load names its own step.
+  // --- White-screen diagnostics (temporary build, round 3) ---
+  // Round 1: the localhost server start() hangs on device. Round 2:
+  // file mode + virtual display - onWebViewCreated STILL never fired,
+  // on two devices, while plain Flutter widgets render and respond
+  // fine. So the platform view itself never attaches. Round 3 crosses
+  // the remaining suspects in one build: Impeller is disabled in the
+  // manifest (Skia fallback), strip B is a minimal flutter_inappwebview
+  // (default settings, no user scripts, plain https URL), strip C is
+  // the official webview_flutter. Every step is written to an
+  // on-screen log so the outcome names the culprit.
   final List<String> _diag = <String>[];
+  late final WebViewController _testC;
 
   void _log(String msg) {
     final now = DateTime.now();
@@ -161,7 +166,23 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    _log('app started - diagnostic build 2 (file mode, virtual display)');
+    _log('app started - diagnostic build 3 (Impeller off, A/B/C test)');
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _log('first frame rendered');
+    });
+    // Test C controller (official webview_flutter), example.com only.
+    _testC = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageStarted: (url) => _log('C: official page started'),
+          onPageFinished: (url) => _log('C: official LOADED'),
+          onWebResourceError: (e) =>
+              _log('C: official error: ${e.description}'),
+        ),
+      )
+      ..loadRequest(Uri.parse('https://example.com'));
+    _log('C: official controller created (dart side)');
   }
 
   int get _langIndex => _lang == 'zh-Hant' ? 1 : (_lang == 'en' ? 2 : 0);
@@ -421,6 +442,45 @@ window.webkit.messageHandlers = window.webkit.messageHandlers || {};
                 dark: dark,
                 accent: _accent,
                 onTap: _setTab,
+              ),
+            ),
+            // Round-3 differential test strips (temporary build):
+            // B = minimal flutter_inappwebview (default settings, no
+            // user scripts, https URL), C = official webview_flutter.
+            Positioned(
+              left: 8,
+              right: 8,
+              bottom: 96,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'B: inapp 最简配置测试',
+                    style: TextStyle(color: Colors.amber, fontSize: 10),
+                  ),
+                  SizedBox(
+                    height: 92,
+                    child: InAppWebView(
+                      initialUrlRequest: URLRequest(
+                        url: WebUri('https://example.com'),
+                      ),
+                      onWebViewCreated: (c) =>
+                          _log('B: inapp minimal created'),
+                      onLoadStop: (c, u) => _log('B: inapp minimal LOADED'),
+                      onReceivedError: (c, r, e) =>
+                          _log('B: inapp error: ${e.type}'),
+                    ),
+                  ),
+                  const Text(
+                    'C: 官方 webview 组件测试',
+                    style: TextStyle(color: Colors.amber, fontSize: 10),
+                  ),
+                  SizedBox(
+                    height: 92,
+                    child: WebViewWidget(controller: _testC),
+                  ),
+                ],
               ),
             ),
             // Diagnostic overlay (temporary build): load-path log plus
