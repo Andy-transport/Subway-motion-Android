@@ -23,6 +23,20 @@ source repo is never modified):
      page code reads it through `window.STRUCTURE_INDEX || {}` guards,
      so an empty object is safe), and the two changelog lines that
      advertise the feature.
+  6. Bake the native-bridge shim into the page, right after <head> so
+     it runs before every page script. The shell is the official
+     webview_flutter (flutter_inappwebview never attached on the
+     user's devices - see lib/main.dart), and webview_flutter has no
+     document-start user scripts, so the shim ships inside the page:
+     it defines window._metroSystemLang (from navigator.language, the
+     same Hans/Hant/en mapping the old Dart shim computed from the OS
+     locale) and window._metroIsPad = false, and forwards the four
+     webkit message handlers the page checks for (tabChanged /
+     cityChanged / themeState / langChanged) plus the
+     flutter_inappwebview.callHandler surface (used by the patched
+     openStore jump) to the shell's JavaScript channels of the same
+     names, JSON-encoding each message. cityMenu is deliberately NOT
+     defined - its presence is how the page detects the iOS shell.
 
 Fails loudly if an expected block is not found, so a future web-core
 change cannot silently ship the Siri UI or the iOS version again.
@@ -171,6 +185,43 @@ for frag in ("「结构」栏目", "结构详情页配备"):
     assert len(hits) == 1 and len(hits[0]) < 5000, f"changelog line not unique/short: {frag}"
     html = "\n".join(ln for ln in lines if frag not in ln)
     assert frag not in html, f"changelog line still present: {frag}"
+
+# 6. Bridge shim (see header, item 6).
+SHIM = """<script>
+(function () {
+  window._metroAndroidShim = true;
+  function send(name, m) {
+    var ch = window[name];
+    if (ch && typeof ch.postMessage === 'function') {
+      try { ch.postMessage(JSON.stringify(m === undefined ? null : m)); } catch (e) {}
+    }
+  }
+  window._metroSystemLang = (function () {
+    var l = (navigator.language || 'zh-CN').toLowerCase();
+    if (l.indexOf('zh') === 0) {
+      return (l.indexOf('tw') >= 0 || l.indexOf('hk') >= 0 || l.indexOf('mo') >= 0 || l.indexOf('hant') >= 0) ? 'zh-Hant' : 'zh-Hans';
+    }
+    if (l.indexOf('en') === 0) return 'en';
+    return 'zh-Hans';
+  })();
+  window._metroIsPad = false;
+  window.webkit = window.webkit || {};
+  window.webkit.messageHandlers = window.webkit.messageHandlers || {};
+  ['tabChanged', 'cityChanged', 'themeState', 'langChanged'].forEach(function (n) {
+    window.webkit.messageHandlers[n] = { postMessage: function (m) { send(n, m); } };
+  });
+  window.flutter_inappwebview = {
+    callHandler: function (name, m) { send(name, m); return Promise.resolve(null); }
+  };
+})();
+</script>
+"""
+assert "_metroAndroidShim" not in html, "shim already present"
+head_pos = html.find("<head>")
+assert head_pos != -1, "<head> not found"
+insert_at = head_pos + len("<head>")
+html = html[:insert_at] + "\n" + SHIM + html[insert_at:]
+assert html.count("_metroAndroidShim") == 1, "shim not inserted exactly once"
 
 path.write_text(html, encoding="utf-8")
 print(

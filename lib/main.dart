@@ -1,40 +1,52 @@
 // Subway tools - Android (Flutter shell).
 //
-// The app is a full-screen WebView over the same offline web core as the
-// iOS app (Andy-transport/Subway-motion, web/template.html built by
-// web/build_offline.py). CI clones that repo, builds the self-contained
-// offline page and drops it into assets/web/ (see tools/prepare_web.sh).
-// The page is loaded directly from the bundled assets: it is fully
-// self-contained, so no server is needed. A localhost server was tried
-// first, but its start() never returns on the user's HyperOS phone
-// (verified on device 2026-11-22: 6 s timeout, Future not completed),
-// and the old build awaited it in main() before runApp - the app sat
-// on the white launch window forever. Do NOT reintroduce a startup
-// server await.
+// The app is a full-screen WebView over the same offline web core as
+// the iOS app (Andy-transport/Subway-motion, web/template.html built
+// by web/build_offline.py). CI clones that repo's test branch, builds
+// the self-contained offline page and drops it into assets/web/ (see
+// tools/prepare_web.sh); the Android packaging strips the Apple-only
+// features and the Structure tab (tools/strip_apple_features.py).
+//
+// WebView engine: the OFFICIAL webview_flutter. History (all verified
+// on the user's phones, 2026-11-22): flutter_inappwebview's platform
+// view never attached - onWebViewCreated never fired in hybrid or
+// virtual-display mode, with Impeller on or off, on two devices,
+// while plain Flutter widgets rendered fine; its localhost server
+// start() also hangs on device. webview_flutter created, navigated
+// and painted on the same devices in the same build, so the shell was
+// rebuilt on it. Impeller stays disabled (the tested combination).
+//
+// The page is loaded with loadFlutterAsset, which serves it from the
+// appassets origin: localStorage persists and the page's relative
+// fetch('trains.json') is served from the bundled assets too.
 //
 // Native bridge: the web page detects the iOS shell through
-// window.webkit.messageHandlers.cityMenu. Android deliberately does NOT
-// provide cityMenu, so the page stays in its own-UI mode (web city menu,
-// web search, web settings). Only four handlers are shimmed, each checked
-// individually by the page and none of which flips it into iOS mode:
+// window.webkit.messageHandlers.cityMenu. Android deliberately does
+// NOT provide cityMenu, so the page stays in its own-UI mode (web city
+// menu, web search, web settings). The packaging step bakes a small
+// shim into the page (tools/strip_apple_features.py) that defines
+// window._metroSystemLang / window._metroIsPad and forwards four
+// webkit handlers plus the 'openStore' callHandler to JavaScript
+// channels of the same names registered below:
 //   tabChanged  -> keep the Flutter glass tab bar in sync
 //   cityChanged -> tint the glass bar with the current city's colour
 //   themeState  -> switch the glass bar between light / dark glass
 //   langChanged -> relabel the glass bar (zh-Hans / zh-Hant / en)
-// Siri / Apple Intelligence: the Android build strips the Siri Shortcuts
-// settings row and sub-page from the web page at packaging time
-// (tools/strip_apple_features.py), and no addShortcut handler exists here.
+//   openStore   -> open a transit app in the phone's own app store
+// Siri / Apple Intelligence: the Android build strips the Siri
+// Shortcuts settings row and sub-page from the web page at packaging
+// time, and no addShortcut channel exists here.
 
-import 'dart:collection';
+import 'dart:convert';
 import 'dart:ui';
 
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -72,7 +84,7 @@ const List<_TabSpec> _tabs = [
   // No Structure tab on Android (user, 2026-11-22): the iOS test
   // version has it, but Android stays at five tabs; the structure
   // panel and its image data are stripped from the page at packaging
-  // time (tools/strip_apple_features.py, item 5).
+  // time (tools/strip_apple_features.py).
   _TabSpec('more', Icons.settings_outlined, ['更多', '更多', 'More']),
 ];
 
@@ -94,13 +106,14 @@ const Map<String, Color> _cityAccents = {
 };
 
 // Transit-app store jump: the web page's openTransitApp() knows each
-// city's transit app by its Apple App Store id; the Android build patches
-// its fallback to call the shell's 'openStore' handler with that id
-// (tools/strip_apple_features.py). Apple id -> Android package name.
-// Every package name was verified against a real store / listing page on
-// 2026-11-20 (Xiaomi store, APKPure, 360, listing mirrors) - do not add
-// or change one without a source. Chengdu note: cderg.cocc.cocc_cdids is
-// the official 成都地铁; com.zhongren.metrochengdu is a third-party app.
+// city's transit app by its Apple App Store id; the Android build
+// patches its fallback to call the shell's 'openStore' handler with
+// that id (tools/strip_apple_features.py). Apple id -> Android
+// package name. Every package name was verified against a real store
+// / listing page on 2026-11-20 (Xiaomi store, APKPure, 360, listing
+// mirrors) - do not add or change one without a source. Chengdu note:
+// cderg.cocc.cocc_cdids is the official 成都地铁; com.zhongren.
+// metrochengdu is a third-party app.
 const Map<String, String> _transitPackages = {
   '1071038870': 'cn.com.bmac.nfc', // 北京一卡通
   '1441271928': 'com.nsmetro.shengjingtong', // 盛京通
@@ -126,6 +139,16 @@ String _systemLangCode() {
   return 'zh-Hans';
 }
 
+// The baked page shim JSON-encodes every bridged message; decode it
+// back, falling back to the raw string for non-JSON senders.
+Object? _decodeMessage(String message) {
+  try {
+    return jsonDecode(message);
+  } catch (_) {
+    return message;
+  }
+}
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -134,98 +157,125 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  InAppWebViewController? _web;
+  late final WebViewController _web;
   String _tab = 'map'; // the web page opens on the map, same as iOS
   bool _dark = false;
   String _lang = _systemLangCode();
   Color _accent = _cityAccents['bj']!;
   bool _loaded = false;
-
-  // --- White-screen diagnostics (temporary build, round 3) ---
-  // Round 1: the localhost server start() hangs on device. Round 2:
-  // file mode + virtual display - onWebViewCreated STILL never fired,
-  // on two devices, while plain Flutter widgets render and respond
-  // fine. So the platform view itself never attaches. Round 3 crosses
-  // the remaining suspects in one build: Impeller is disabled in the
-  // manifest (Skia fallback), strip B is a minimal flutter_inappwebview
-  // (default settings, no user scripts, plain https URL), strip C is
-  // the official webview_flutter. Every step is written to an
-  // on-screen log so the outcome names the culprit.
-  final List<String> _diag = <String>[];
-  late final WebViewController _testC;
-
-  void _log(String msg) {
-    final now = DateTime.now();
-    final ts =
-        '${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
-    _diag.add('$ts $msg');
-    if (_diag.length > 14) _diag.removeAt(0);
-    if (mounted) setState(() {});
-  }
+  String? _loadError;
 
   @override
   void initState() {
     super.initState();
-    _log('app started - diagnostic build 3 (Impeller off, A/B/C test)');
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _log('first frame rendered');
-    });
-    // Test C controller (official webview_flutter), example.com only.
-    _testC = WebViewController()
+    _web = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(const Color(0xFF0C0F16))
       ..setNavigationDelegate(
         NavigationDelegate(
-          onPageStarted: (url) => _log('C: official page started'),
-          onPageFinished: (url) => _log('C: official LOADED'),
-          onWebResourceError: (e) =>
-              _log('C: official error: ${e.description}'),
+          onPageFinished: (url) {
+            if (!_loaded || _loadError != null) {
+              setState(() {
+                _loaded = true;
+                _loadError = null;
+              });
+            }
+          },
+          onWebResourceError: (error) {
+            if (error.isForMainFrame ?? false) {
+              setState(() => _loadError = error.description);
+            }
+          },
         ),
       )
-      ..loadRequest(Uri.parse('https://example.com'));
-    _log('C: official controller created (dart side)');
+      ..addJavaScriptChannel(
+        'tabChanged',
+        onMessageReceived: (message) {
+          final key = _decodeMessage(message.message);
+          if (key is String &&
+              _tabs.any((t) => t.key == key) &&
+              key != _tab) {
+            setState(() => _tab = key);
+          }
+        },
+      )
+      ..addJavaScriptChannel(
+        'cityChanged',
+        onMessageReceived: (message) {
+          final v = _decodeMessage(message.message);
+          if (v is Map) {
+            final accent = _cityAccents[v['city']];
+            if (accent != null && accent != _accent) {
+              setState(() => _accent = accent);
+            }
+          }
+        },
+      )
+      ..addJavaScriptChannel(
+        'themeState',
+        onMessageReceived: (message) {
+          final v = _decodeMessage(message.message);
+          if (v is Map) {
+            final d = v['dark'];
+            if (d is bool && d != _dark) {
+              setState(() => _dark = d);
+            }
+          }
+        },
+      )
+      ..addJavaScriptChannel(
+        'langChanged',
+        onMessageReceived: (message) {
+          final v = _decodeMessage(message.message);
+          if (v is Map) {
+            var l = v['lang'];
+            if (l == 'system' || l == null) l = _systemLangCode();
+            if (l is String &&
+                ['zh-Hans', 'zh-Hant', 'en'].contains(l) &&
+                l != _lang) {
+              setState(() => _lang = l);
+            }
+          }
+        },
+      )
+      ..addJavaScriptChannel(
+        'openStore',
+        onMessageReceived: (message) {
+          final v = _decodeMessage(message.message);
+          _openStore(v.toString());
+        },
+      );
+    final platform = _web.platform;
+    if (platform is AndroidWebViewController) {
+      platform.setGeolocationPermissionsPromptCallbacks(
+        onShowPrompt: (request) async {
+          final status = await Permission.location.request();
+          return GeolocationPermissionsResponse(
+            allow: status.isGranted,
+            retain: false,
+          );
+        },
+      );
+    }
+    _web.loadFlutterAsset('assets/web/index.html');
   }
 
   int get _langIndex => _lang == 'zh-Hant' ? 1 : (_lang == 'en' ? 2 : 0);
 
-  // Injected before the page's own scripts run (document start): system
-  // language for the page's savedLang(), and the webkit handler shims.
-  // NOTE: no cityMenu handler on purpose - see the header comment.
-  String get _shimSource {
-    final lang = _systemLangCode();
-    return '''
-window._metroSystemLang = '$lang';
-window._metroIsPad = false;
-window.webkit = window.webkit || {};
-window.webkit.messageHandlers = window.webkit.messageHandlers || {};
-(function () {
-  function forward(name) {
-    return { postMessage: function (m) {
-      if (window.flutter_inappwebview) {
-        window.flutter_inappwebview.callHandler(name, m);
-      }
-    } };
-  }
-  window.webkit.messageHandlers.tabChanged = forward('tabChanged');
-  window.webkit.messageHandlers.cityChanged = forward('cityChanged');
-  window.webkit.messageHandlers.themeState = forward('themeState');
-  window.webkit.messageHandlers.langChanged = forward('langChanged');
-})();
-''';
-  }
-
   Future<void> _setTab(String key) async {
     setState(() => _tab = key);
-    await _web?.evaluateJavascript(
-      source: "window.metroApp && window.metroApp.setTab('$key')",
+    await _web.runJavaScript(
+      "window.metroApp && window.metroApp.setTab('$key')",
     );
   }
 
-  // Open the transit app (by Apple id from the web page) in this phone's
-  // own app store: Xiaomi -> mimarket://, OPPO -> oppomarket:// (its
-  // parameter is `packagename`, not `id`), vivo -> vivomarket://, any
-  // other brand -> the generic market:// intent, which the phone's
-  // default store answers. If the vendor scheme fails, fall back to the
-  // generic market intent, then to the app's 应用宝 web page.
+  // Open the transit app (by Apple id from the web page) in this
+  // phone's own app store: Xiaomi -> mimarket://, OPPO ->
+  // oppomarket:// (its parameter is `packagename`, not `id`), vivo ->
+  // vivomarket://, any other brand -> the generic market:// intent,
+  // which the phone's default store answers. If the vendor scheme
+  // fails, fall back to the generic market intent, then to the app's
+  // 应用宝 web page.
   Future<void> _openStore(String appleId) async {
     final pkg = _transitPackages[appleId];
     if (pkg == null) return;
@@ -266,11 +316,9 @@ window.webkit.messageHandlers = window.webkit.messageHandlers || {};
   }
 
   Future<bool> _handleBack() async {
-    final web = _web;
-    if (web == null) return false;
     try {
-      final handled = await web.evaluateJavascript(
-        source: 'window.metroApp ? window.metroApp.goBack() : false',
+      final handled = await _web.runJavaScriptReturningResult(
+        'window.metroApp ? window.metroApp.goBack() : false',
       );
       return handled == true || handled == 'true';
     } catch (_) {
@@ -292,144 +340,52 @@ window.webkit.messageHandlers = window.webkit.messageHandlers || {};
         }
       },
       child: Scaffold(
-        // Same near-black as the iOS shell: nothing white flashes at the
-        // edges or while the page loads.
+        // Same near-black as the iOS shell: nothing white flashes at
+        // the edges or while the page loads.
         backgroundColor: const Color(0xFF0C0F16),
         body: Stack(
           children: [
-            Positioned.fill(
-              child: InAppWebView(
-              initialFile: 'assets/web/index.html',
-              initialUserScripts: UnmodifiableListView<UserScript>([
-                UserScript(
-                  source: _shimSource,
-                  injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
-                ),
-              ]),
-              initialSettings: InAppWebViewSettings(
-                javaScriptEnabled: true,
-                domStorageEnabled: true,
-                databaseEnabled: true,
-                geolocationEnabled: true,
-                // Virtual display: hybrid composition never created the
-                // WebView on the user's HyperOS phone (round 1 log had
-                // no 'webview created' line at all).
-                useHybridComposition: false,
-                supportZoom: false,
-                builtInZoomControls: false,
-                displayZoomControls: false,
-                mediaPlaybackRequiresUserGesture: false,
-                transparentBackground: false,
-              ),
-              onWebViewCreated: (controller) {
-                _web = controller;
-                _log('webview created: assets file');
-                controller.addJavaScriptHandler(
-                  handlerName: 'tabChanged',
-                  callback: (args) {
-                    if (args.isNotEmpty && args.first is String) {
-                      final key = args.first as String;
-                      if (_tabs.any((t) => t.key == key) && key != _tab) {
-                        setState(() => _tab = key);
-                      }
-                    }
-                    return null;
-                  },
-                );
-                controller.addJavaScriptHandler(
-                  handlerName: 'cityChanged',
-                  callback: (args) {
-                    if (args.isNotEmpty && args.first is Map) {
-                      final city = (args.first as Map)['city'];
-                      final accent = _cityAccents[city];
-                      if (accent != null && accent != _accent) {
-                        setState(() => _accent = accent);
-                      }
-                    }
-                    return null;
-                  },
-                );
-                controller.addJavaScriptHandler(
-                  handlerName: 'themeState',
-                  callback: (args) {
-                    if (args.isNotEmpty && args.first is Map) {
-                      final d = (args.first as Map)['dark'];
-                      if (d is bool && d != _dark) {
-                        setState(() => _dark = d);
-                      }
-                    }
-                    return null;
-                  },
-                );
-                controller.addJavaScriptHandler(
-                  handlerName: 'openStore',
-                  callback: (args) {
-                    if (args.isNotEmpty) {
-                      _openStore(args.first.toString());
-                    }
-                    return null;
-                  },
-                );
-                controller.addJavaScriptHandler(
-                  handlerName: 'langChanged',
-                  callback: (args) {
-                    if (args.isNotEmpty && args.first is Map) {
-                      var l = (args.first as Map)['lang'];
-                      if (l == 'system' || l == null) l = _systemLangCode();
-                      if (l is String &&
-                          ['zh-Hans', 'zh-Hant', 'en'].contains(l) &&
-                          l != _lang) {
-                        setState(() => _lang = l);
-                      }
-                    }
-                    return null;
-                  },
-                );
-              },
-              onLoadStart: (controller, url) {
-                _log('load start: $url');
-              },
-              onLoadStop: (controller, url) {
-                _log('load STOP: $url');
-                if (!_loaded) setState(() => _loaded = true);
-              },
-              onProgressChanged: (controller, progress) {
-                if (progress == 25 ||
-                    progress == 50 ||
-                    progress == 75 ||
-                    progress == 100) {
-                  _log('progress $progress%');
-                }
-              },
-              onConsoleMessage: (controller, consoleMessage) {
-                final m = consoleMessage.message;
-                _log(
-                  'console: ${m.length > 90 ? m.substring(0, 90) : m}',
-                );
-              },
-              onReceivedHttpError: (controller, request, response) {
-                if (request.isForMainFrame ?? false) {
-                  _log(
-                    'HTTP error ${response.statusCode} for ${request.url}',
-                  );
-                }
-              },
-              onGeolocationPermissionsShowPrompt: (controller, origin) async {
-                final status = await Permission.location.request();
-                return GeolocationPermissionShowPromptResponse(
-                  origin: origin,
-                  allow: status.isGranted,
-                  retain: false,
-                );
-              },
-              onReceivedError: (controller, request, error) {
-                _log('load ERROR: ${error.type} - ${error.description}');
-              },
-              ),
-            ),
-            if (!_loaded)
+            Positioned.fill(child: WebViewWidget(controller: _web)),
+            if (!_loaded && _loadError == null)
               const Center(
                 child: CircularProgressIndicator(color: Colors.white70),
+              ),
+            // Shown only if the main frame fails to load: the error
+            // text and a retry button, instead of an endless spinner.
+            if (_loadError != null)
+              Center(
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 32),
+                  padding: const EdgeInsets.all(16),
+                  color: const Color(0xCC000000),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        '页面加载失败',
+                        style: TextStyle(color: Colors.amber, fontSize: 14),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _loadError!,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          setState(() {
+                            _loadError = null;
+                            _loaded = false;
+                          });
+                          _web.loadFlutterAsset('assets/web/index.html');
+                        },
+                        child: const Text('重试'),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             Positioned(
               left: 0,
@@ -444,98 +400,6 @@ window.webkit.messageHandlers = window.webkit.messageHandlers || {};
                 onTap: _setTab,
               ),
             ),
-            // Round-3 differential test strips (temporary build):
-            // B = minimal flutter_inappwebview (default settings, no
-            // user scripts, https URL), C = official webview_flutter.
-            Positioned(
-              left: 8,
-              right: 8,
-              bottom: 96,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Text(
-                    'B: inapp 最简配置测试',
-                    style: TextStyle(color: Colors.amber, fontSize: 10),
-                  ),
-                  SizedBox(
-                    height: 92,
-                    child: InAppWebView(
-                      initialUrlRequest: URLRequest(
-                        url: WebUri('https://example.com'),
-                      ),
-                      onWebViewCreated: (c) =>
-                          _log('B: inapp minimal created'),
-                      onLoadStop: (c, u) => _log('B: inapp minimal LOADED'),
-                      onReceivedError: (c, r, e) =>
-                          _log('B: inapp error: ${e.type}'),
-                    ),
-                  ),
-                  const Text(
-                    'C: 官方 webview 组件测试',
-                    style: TextStyle(color: Colors.amber, fontSize: 10),
-                  ),
-                  SizedBox(
-                    height: 92,
-                    child: WebViewWidget(controller: _testC),
-                  ),
-                ],
-              ),
-            ),
-            // Diagnostic overlay (temporary build): load-path log plus
-            // two manual load switches for on-device bisection.
-            Positioned(
-              left: 8,
-              right: 8,
-              top: MediaQuery.of(context).padding.top + 8,
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                color: const Color(0xCC000000),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      '诊断版 - 页面加载日志',
-                      style: TextStyle(color: Colors.amber, fontSize: 12),
-                    ),
-                    for (final line in _diag)
-                      Text(
-                        line,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                        ),
-                      ),
-                    Row(
-                      children: [
-                        TextButton(
-                          onPressed: () {
-                            _log('manual: load assets file');
-                            _web?.loadFile(
-                              assetFilePath: 'assets/web/index.html',
-                            );
-                          },
-                          child: const Text('文件直载'),
-                        ),
-                        TextButton(
-                          onPressed: () {
-                            _log('manual: load example.com');
-                            _web?.loadUrl(
-                              urlRequest: URLRequest(
-                                url: WebUri('https://example.com'),
-                              ),
-                            );
-                          },
-                          child: const Text('示例页'),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
           ],
         ),
       ),
@@ -545,12 +409,13 @@ window.webkit.messageHandlers = window.webkit.messageHandlers || {};
 
 /// Floating Liquid-Glass-style tab bar.
 ///
-/// Android has no system Liquid Glass (that material is Apple's), so this
-/// reproduces its look with Flutter's compositor: a capsule floating over
-/// the content, real-time backdrop blur + saturation, a translucent tint,
-/// a bright top edge highlight and a soft drop shadow. What it cannot do
-/// is Apple's edge refraction (lensing) - the blur approximation is what
-/// every Android glassmorphism implementation uses.
+/// Android has no system Liquid Glass (that material is Apple's), so
+/// this reproduces its look with Flutter's compositor: a capsule
+/// floating over the content, real-time backdrop blur + saturation, a
+/// translucent tint, a bright top edge highlight and a soft drop
+/// shadow. What it cannot do is Apple's edge refraction (lensing) -
+/// the blur approximation is what every Android glassmorphism
+/// implementation uses.
 class _GlassTabBar extends StatelessWidget {
   const _GlassTabBar({
     required this.tabs,
