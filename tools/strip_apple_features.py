@@ -57,8 +57,15 @@ def remove_balanced(text: str, start_marker: str, tag: str = "div") -> str:
 
 # 1. Settings row that opens the Siri sub-page.
 html = remove_balanced(html, '<div class="more-row" @click="showSiriSub = true">')
-# 2. The Siri sub-page itself.
-html = remove_balanced(html, '<div class="more-sub" v-show="showSiriSub">')
+# 2. The Siri sub-page itself. Its class list has changed before
+# ("more-sub" -> "more-sub more-sub-siri"), so anchor on the v-show
+# attribute and take the enclosing <div ...> as the marker.
+anchor = html.find('v-show="showSiriSub"')
+assert anchor != -1, "Siri sub-page anchor not found"
+div_start = html.rfind('<div', 0, anchor)
+div_end = html.find('>', anchor)
+assert div_start != -1 and div_end != -1, "Siri sub-page div not found"
+html = remove_balanced(html, html[div_start:div_end + 1])
 
 assert "showSiriSub = true" not in html, "Siri row still present"
 assert 'v-show="showSiriSub"' not in html, "Siri sub-page still present"
