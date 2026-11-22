@@ -266,6 +266,28 @@ class _HomePageState extends State<HomePage> {
 
   int get _langIndex => _lang == 'zh-Hant' ? 1 : (_lang == 'en' ? 2 : 0);
 
+  // Render the WebView through Texture Layer Hybrid Composition
+  // instead of full Hybrid Composition. Symptom history: build #17
+  // "zoom is laggy", build #18 (native WebView zoom disabled) still
+  // "very laggy overall" on the user's HyperOS phone. Full Hybrid
+  // Composition synchronises every WebView frame into Flutter's
+  // compositor, which is the slow path for continuously animated web
+  // content like the map's pan/zoom and list scrolling; TLHC lets the
+  // WebView render into a texture instead. Single-variable change:
+  // renderer (Impeller off), page and zoom settings are unchanged.
+  Widget _buildWebView() {
+    final controllerPlatform = _web.platform;
+    if (controllerPlatform is AndroidWebViewController) {
+      return WebViewWidget.fromPlatformCreationParams(
+        params: AndroidWebViewWidgetCreationParams(
+          controller: controllerPlatform,
+          displayWithHybridComposition: false,
+        ),
+      );
+    }
+    return WebViewWidget(controller: _web);
+  }
+
   Future<void> _setTab(String key) async {
     setState(() => _tab = key);
     await _web.runJavaScript(
@@ -349,7 +371,7 @@ class _HomePageState extends State<HomePage> {
         backgroundColor: const Color(0xFF0C0F16),
         body: Stack(
           children: [
-            Positioned.fill(child: WebViewWidget(controller: _web)),
+            Positioned.fill(child: _buildWebView()),
             if (!_loaded && _loadError == null)
               const Center(
                 child: CircularProgressIndicator(color: Colors.white70),
