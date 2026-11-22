@@ -170,6 +170,10 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _web = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      // The map's pinch zoom is handled inside the page (svg-pan-zoom).
+      // Leaving the WebView's own zoom enabled makes the two fight
+      // over every pinch, which felt laggy on device (2026-11-22).
+      ..enableZoom(false)
       ..setBackgroundColor(const Color(0xFF0C0F16))
       ..setNavigationDelegate(
         NavigationDelegate(

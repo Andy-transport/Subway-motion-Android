@@ -39,6 +39,17 @@ source repo is never modified):
      openStore jump) to the shell's JavaScript channels of the same
      names, JSON-encoding each message. cityMenu is deliberately NOT
      defined - its presence is how the page detects the iOS shell.
+  7. City capsule fallback: showCityMenu() posts to the iOS shell's
+     cityMenu handler when present; its no-handler fallback is a
+     legacy two-city toggle (toggleCity: Beijing <-> Shenyang, from
+     when those were the only cities). Android has no cityMenu
+     handler, so without this patch the transfer/map city capsule can
+     only ever bounce between those two cities (reported on device
+     2026-11-22; the Settings city list was unaffected). Replace the
+     fallback with opening the full web city list - the same
+     showCitySub page Settings uses: setTab('more') + showCitySub.
+     Picking a city there lands back on the transfer tab (the web
+     core's switchCity behaviour), where the tap started.
 
 Fails loudly if an expected block is not found, so a future web-core
 change cannot silently ship the Siri UI or the iOS version again.
@@ -191,6 +202,12 @@ for frag in ("「结构」栏目", "结构详情页配备"):
     assert len(hits) == 1 and len(hits[0]) < 5000, f"changelog line not unique/short: {frag}"
     html = "\n".join(ln for ln in lines if frag not in ln)
     assert frag not in html, f"changelog line still present: {frag}"
+
+# 7. City capsule fallback -> full web city list (see header, item 7).
+old_toggle = "this.toggleCity();"
+assert html.count(old_toggle) == 1, "city capsule toggle fallback not found exactly once"
+html = html.replace(old_toggle, "this.setTab('more'); this.showCitySub = true;")
+assert "this.toggleCity();" not in html, "city toggle fallback still present"
 
 # 6. Bridge shim (see header, item 6).
 SHIM = """<script>
