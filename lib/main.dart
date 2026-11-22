@@ -45,6 +45,8 @@ import 'dart:ui';
 
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -310,6 +312,22 @@ class _HomePageState extends State<HomePage> {
         params: AndroidWebViewWidgetCreationParams(
           controller: controllerPlatform,
           displayWithHybridComposition: false,
+          // TLHC input fix (2026-11-22, on-device report on 1.0.4beta:
+          // the transfer results screen would not scroll - taps worked,
+          // drags never reached the WebView's own scroller). In TLHC
+          // the platform view only receives a pointer sequence after
+          // the gesture arena settles; with no recognizers registered
+          // the WebView lost vertical drags, so the page's fixed
+          // overflow scrollers never moved. An EagerGestureRecognizer
+          // makes the WebView claim every pointer that starts on it
+          // immediately, restoring native in-page scrolling. The tab
+          // bar and top chips are separate widgets above the WebView,
+          // so pointers starting on them are unaffected.
+          gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+            Factory<OneSequenceGestureRecognizer>(
+              () => EagerGestureRecognizer(),
+            ),
+          },
         ),
       );
     }
