@@ -4,8 +4,13 @@
 // iOS app (Andy-transport/Subway-motion, web/template.html built by
 // web/build_offline.py). CI clones that repo, builds the self-contained
 // offline page and drops it into assets/web/ (see tools/prepare_web.sh).
-// The page is served through a localhost server so localStorage, relative
-// fetch() and HTML5 geolocation behave like a normal website.
+// The page is loaded directly from the bundled assets: it is fully
+// self-contained, so no server is needed. A localhost server was tried
+// first, but its start() never returns on the user's HyperOS phone
+// (verified on device 2026-11-22: 6 s timeout, Future not completed),
+// and the old build awaited it in main() before runApp - the app sat
+// on the white launch window forever. Do NOT reintroduce a startup
+// server await.
 //
 // Native bridge: the web page detects the iOS shell through
 // window.webkit.messageHandlers.cityMenu. Android deliberately does NOT
@@ -29,19 +34,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
-
-const int _serverPort = 8080;
-
-// Set by _HomePageState._initSource() AFTER the first frame: if the
-// localhost server cannot start on this device (port clash, socket
-// restrictions on some ROMs), the WebView falls back to loading the
-// bundled page directly from assets - the page is fully self-contained,
-// so everything except relative fetch() still works.
-// HISTORY: the server used to be awaited inside main() before runApp;
-// on the user's phone that await never returned, so the app sat on the
-// white launch window forever (white screen, no spinner, no tab bar).
-// Startup must never block the first frame on the server again.
-bool _serverOk = false;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -143,12 +135,14 @@ class _HomePageState extends State<HomePage> {
   String _lang = _systemLangCode();
   Color _accent = _cityAccents['bj']!;
   bool _loaded = false;
-  int _loadRetries = 0;
 
-  // --- White-screen diagnostics (temporary build) ---
-  // The load path is chosen only after the first frame, and every step
-  // is written to an on-screen log so a stuck load names its own step.
-  bool _srcReady = false;
+  // --- White-screen diagnostics (temporary build, round 2) ---
+  // Round 1 on device proved: the localhost server start() hangs, AND
+  // with hybrid composition the WebView's onWebViewCreated never fired
+  // at all - no load start, no error, just the spinner. Round 2 loads
+  // the bundled file directly and uses virtual-display mode
+  // (useHybridComposition: false); every step is written to an
+  // on-screen log so a stuck load names its own step.
   final List<String> _diag = <String>[];
 
   void _log(String msg) {
@@ -163,24 +157,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    _log('app started - diagnostic build');
-    _initSource();
-  }
-
-  Future<void> _initSource() async {
-    try {
-      final server = InAppLocalhostServer(
-        documentRoot: 'assets/web',
-        port: _serverPort,
-      );
-      await server.start().timeout(const Duration(seconds: 6));
-      _serverOk = true;
-      _log('localhost server OK (port $_serverPort)');
-    } catch (e) {
-      _serverOk = false;
-      _log('server failed: $e -> file mode');
-    }
-    if (mounted) setState(() => _srcReady = true);
+    _log('app started - diagnostic build 2 (file mode, virtual display)');
   }
 
   int get _langIndex => _lang == 'zh-Hant' ? 1 : (_lang == 'en' ? 2 : 0);
@@ -295,14 +272,9 @@ window.webkit.messageHandlers = window.webkit.messageHandlers || {};
         backgroundColor: const Color(0xFF0C0F16),
         body: Stack(
           children: [
-            if (_srcReady)
-            InAppWebView(
-              initialUrlRequest: _serverOk
-                  ? URLRequest(
-                      url: WebUri('http://localhost:$_serverPort/index.html'),
-                    )
-                  : null,
-              initialFile: _serverOk ? null : 'assets/web/index.html',
+            Positioned.fill(
+              child: InAppWebView(
+              initialFile: 'assets/web/index.html',
               initialUserScripts: UnmodifiableListView<UserScript>([
                 UserScript(
                   source: _shimSource,
@@ -314,7 +286,10 @@ window.webkit.messageHandlers = window.webkit.messageHandlers || {};
                 domStorageEnabled: true,
                 databaseEnabled: true,
                 geolocationEnabled: true,
-                useHybridComposition: true,
+                // Virtual display: hybrid composition never created the
+                // WebView on the user's HyperOS phone (round 1 log had
+                // no 'webview created' line at all).
+                useHybridComposition: false,
                 supportZoom: false,
                 builtInZoomControls: false,
                 displayZoomControls: false,
@@ -323,9 +298,7 @@ window.webkit.messageHandlers = window.webkit.messageHandlers || {};
               ),
               onWebViewCreated: (controller) {
                 _web = controller;
-                _log(
-                  'webview created: ${_serverOk ? 'http://localhost:$_serverPort/index.html' : 'assets file'}',
-                );
+                _log('webview created: assets file');
                 controller.addJavaScriptHandler(
                   handlerName: 'tabChanged',
                   callback: (args) {
@@ -426,25 +399,8 @@ window.webkit.messageHandlers = window.webkit.messageHandlers || {};
               },
               onReceivedError: (controller, request, error) {
                 _log('load ERROR: ${error.type} - ${error.description}');
-                // The page is fully offline; a failed main-frame load is
-                // retried at most twice (localhost warm-up race), then we
-                // fall back to the bundled asset file instead of looping.
-                if ((request.isForMainFrame ?? false) && _serverOk) {
-                  _loadRetries++;
-                  if (_loadRetries <= 2) {
-                    controller.loadUrl(
-                      urlRequest: URLRequest(
-                        url: WebUri(
-                          'http://localhost:$_serverPort/index.html',
-                        ),
-                      ),
-                    );
-                  } else {
-                    _serverOk = false;
-                    controller.loadFile(assetFilePath: 'assets/web/index.html');
-                  }
-                }
               },
+              ),
             ),
             if (!_loaded)
               const Center(
