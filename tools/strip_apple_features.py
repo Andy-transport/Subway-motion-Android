@@ -48,6 +48,14 @@ source repo is never modified):
      2026-11-22; the Settings city list was unaffected). Replace the
      fallback with opening the full web city list - the same
      showCitySub page Settings uses: setTab('more') + showCitySub.
+  8. Smooth-zoom interception, appended to the shim (see the
+     _metroSmoothZoom block): during a touch gesture on the map,
+     svg-pan-zoom's per-frame zoomAtPoint/panBy calls are redirected
+     to a virtual state rendered as a CSS transform on the <svg>
+     (GPU bitmap move, the native ZoomImageView principle the user
+     pointed at), and the final state is committed to the library
+     once on finger-lift for a crisp resting render. Stock behaviour
+     outside gestures; self-disables on any error.
      Picking a city there lands back on the transfer tab (the web
      core's switchCity behaviour), where the tap started.
 
@@ -240,6 +248,111 @@ SHIM = """<script>
   window.flutter_inappwebview = {
     callHandler: function (name, m) { send(name, m); return Promise.resolve(null); }
   };
+})();
+// Android smooth zoom (user report 2026-11-22: map pinch/pan "很卡很
+// 卡", asked for stepless zoom and supplied a native ZoomImageView
+// reference - an ImageView whose gestures only move a Matrix over an
+// already-rendered bitmap). Same principle here: svg-pan-zoom's
+// per-frame calls during a touch gesture are intercepted and applied
+// to a VIRTUAL (zoom, pan) state, rendered as a CSS transform on the
+// <svg> element itself - the WebView keeps the map as one rasterised
+// layer and the GPU moves/scales that bitmap, so the gesture is
+// continuous instead of re-rasterising ~2000 SVG nodes (about 1000
+// of them text) every frame. When the last finger lifts, the final
+// state is committed to svg-pan-zoom exactly once (zoomAtPoint to
+// the virtual zoom, then a panBy correction onto the virtual pan),
+// which repaints the vector crisply at the resting position. Any
+// error disables the interception for the session and restores the
+// stock behaviour.
+(function () {
+  window._metroSmoothZoom = true;
+  var MINZ = 0.5, MAXZ = 60; // page init: default minZoom, maxZoom: 60
+  var patchedFor = null, orig = null, dead = false;
+  var active = false, svgEl = null;
+  var startZ = 0, startPan = null, vZ = 0, vPan = null;
+
+  function applyCss() {
+    var k = vZ / startZ;
+    svgEl.style.transform =
+      'translate(' + (vPan.x - k * startPan.x) + 'px,' +
+      (vPan.y - k * startPan.y) + 'px) scale(' + k + ')';
+  }
+  function relPoint(p) {
+    var r = svgEl.getBoundingClientRect();
+    return { x: p.x - r.left, y: p.y - r.top };
+  }
+  function patch(inst) {
+    if (patchedFor === inst) return;
+    if (patchedFor && orig) {
+      try {
+        patchedFor.zoomAtPoint = orig.zoomAtPoint;
+        patchedFor.panBy = orig.panBy;
+      } catch (e) {}
+    }
+    orig = { zoomAtPoint: inst.zoomAtPoint, panBy: inst.panBy };
+    inst.zoomAtPoint = function (z, p) {
+      if (!active) return orig.zoomAtPoint.call(inst, z, p);
+      var rp = relPoint(p);
+      z = Math.min(MAXZ, Math.max(MINZ, z));
+      var ox = (rp.x - vPan.x) / vZ, oy = (rp.y - vPan.y) / vZ;
+      vPan = { x: rp.x - ox * z, y: rp.y - oy * z };
+      vZ = z;
+      applyCss();
+    };
+    inst.panBy = function (d) {
+      if (!active) return orig.panBy.call(inst, d);
+      vPan = { x: vPan.x + d.x, y: vPan.y + d.y };
+      applyCss();
+    };
+    patchedFor = inst;
+  }
+  function begin() {
+    if (active || dead) return;
+    var inst = window.panzoom;
+    svgEl = document.querySelector('#svg8');
+    if (!inst || !svgEl) return;
+    try {
+      patch(inst);
+      startZ = inst.getZoom();
+      startPan = inst.getPan();
+    } catch (e) { dead = true; return; }
+    if (!isFinite(startZ) || !startPan || !isFinite(startPan.x)) return;
+    vZ = startZ;
+    vPan = { x: startPan.x, y: startPan.y };
+    svgEl.style.transformOrigin = '0 0';
+    svgEl.style.transformBox = 'border-box';
+    svgEl.style.willChange = 'transform';
+    active = true;
+  }
+  function end() {
+    if (!active) return;
+    active = false;
+    try {
+      var inst = window.panzoom;
+      if (inst && inst === patchedFor && orig) {
+        var r = svgEl.getBoundingClientRect();
+        orig.zoomAtPoint.call(inst, vZ, {
+          x: r.left + r.width / 2, y: r.top + r.height / 2
+        });
+        var now = inst.getPan();
+        orig.panBy.call(inst, { x: vPan.x - now.x, y: vPan.y - now.y });
+      }
+    } catch (e) { dead = true; }
+    if (svgEl) {
+      svgEl.style.transform = '';
+      svgEl.style.willChange = '';
+    }
+  }
+  document.addEventListener('touchstart', function (e) {
+    var t = e.target;
+    if (t && t.closest && t.closest('#svg8')) begin();
+  }, { capture: true, passive: true });
+  document.addEventListener('touchend', function (e) {
+    if (e.touches.length === 0) end();
+  }, { capture: true, passive: true });
+  document.addEventListener('touchcancel', function (e) {
+    if (e.touches.length === 0) end();
+  }, { capture: true, passive: true });
 })();
 </script>
 """
