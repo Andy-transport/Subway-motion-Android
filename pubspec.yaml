@@ -18,6 +18,11 @@ dependencies:
   # or renderer), while webview_flutter worked in the same build.
   webview_flutter: ^4.10.0
   webview_flutter_android: ^4.0.0
+  # Backs the WebView file selector (profile avatar picking). Without
+  # a selector callback, webview_flutter silently swallows <input
+  # type=file> taps - the login page's avatar picker did nothing on
+  # device (2026-11-22).
+  file_picker: ^8.1.2
   permission_handler: ^11.3.1
   url_launcher: ^6.3.1
   device_info_plus: ^11.3.0

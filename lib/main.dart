@@ -41,6 +41,7 @@ import 'dart:convert';
 import 'dart:ui';
 
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -260,6 +261,25 @@ class _HomePageState extends State<HomePage> {
           );
         },
       );
+      // File inputs (the profile page's avatar picker) do nothing in
+      // webview_flutter unless the shell answers the file selector;
+      // route it to the system picker via file_picker.
+      platform.setOnShowFileSelector((params) async {
+        final wantImage = params.acceptTypes.any(
+          (t) => t.startsWith('image'),
+        );
+        final result = await FilePicker.platform.pickFiles(
+          type: wantImage ? FileType.image : FileType.any,
+          allowMultiple: params.mode == FileSelectorMode.openMultiple,
+        );
+        if (result == null) return null;
+        final uris = <String>[];
+        for (final file in result.files) {
+          final path = file.path;
+          if (path != null) uris.add(Uri.file(path).toString());
+        }
+        return uris.isEmpty ? null : uris;
+      });
     }
     _web.loadFlutterAsset('assets/web/index.html');
   }
