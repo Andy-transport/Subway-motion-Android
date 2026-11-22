@@ -14,7 +14,10 @@
 // while plain Flutter widgets rendered fine; its localhost server
 // start() also hangs on device. webview_flutter created, navigated
 // and painted on the same devices in the same build, so the shell was
-// rebuilt on it. Impeller stays disabled (the tested combination).
+// rebuilt on it. Renderer: Impeller is enabled (Flutter default) at
+// the user's request since the 2026-11-22 load-reduction round - see
+// tools/patch_android.py for how to fall back to Skia if the WebView
+// ever shows black/white on device.
 //
 // The page is loaded with loadFlutterAsset, which serves it from the
 // appassets origin: localStorage persists and the page's relative
@@ -295,8 +298,9 @@ class _HomePageState extends State<HomePage> {
   // Composition synchronises every WebView frame into Flutter's
   // compositor, which is the slow path for continuously animated web
   // content like the map's pan/zoom and list scrolling; TLHC lets the
-  // WebView render into a texture instead. Single-variable change:
-  // renderer (Impeller off), page and zoom settings are unchanged.
+  // WebView render into a texture instead. Shipped bundled with the
+  // Impeller enable and the tab-bar blur removal - the user asked to
+  // combine the whole load-reduction round into one install.
   Widget _buildWebView() {
     final controllerPlatform = _web.platform;
     if (controllerPlatform is AndroidWebViewController) {

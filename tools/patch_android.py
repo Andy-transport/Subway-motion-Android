@@ -90,20 +90,15 @@ perms = (
 )
 if "ACCESS_FINE_LOCATION" not in mtext:
     mtext = mtext.replace("<application", perms + "    <application", 1)
-# Round-3 white-screen experiment (2026-11-22): on the user's phones
-# the WebView platform view never attached under the default Impeller
-# renderer - onWebViewCreated never fired in either composition mode,
-# across two devices, while plain Flutter widgets rendered fine.
-# Disable Impeller (Skia fallback) to test the renderer as the cause.
-# NOTE: the pre-crash-fix builds that "tested" this never launched at
-# all (missing MainActivity), so it has never actually been tried.
-if "EnableImpeller" not in mtext:
-    mtext = mtext.replace(
-        "</application>",
-        '        <meta-data android:name="io.flutter.embedding.android.EnableImpeller" android:value="false"/>\n'
-        "    </application>",
-        1,
-    )
+# Renderer: Impeller (Flutter's new renderer) is left at the Flutter
+# default, i.e. ENABLED, at the user's explicit request (2026-11-22)
+# for the load-reduction round. An EnableImpeller=false meta-data
+# used to be injected here, but that was an untested leftover from
+# the flutter_inappwebview era - the builds that "tested" it never
+# launched at all (missing MainActivity), and webview_flutter was
+# only ever verified with it off by inheritance, not by need. If the
+# WebView shows a black/white screen on device with Impeller on,
+# re-add the meta-data here to fall back to Skia.
 manifest.write_text(mtext, encoding="utf-8")
 print("patch_android: applicationId, label and permissions set")
 
