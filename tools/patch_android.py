@@ -77,7 +77,10 @@ queries = (
     '        <data android:scheme="market"/></intent>\n'
     "    </queries>\n"
 )
-if "<queries>" not in mtext:
+if "mimarket" not in mtext:
+    # The flutter scaffold already ships a <queries> block (PROCESS_TEXT),
+    # so guard on the scheme itself; a second <queries> element is legal
+    # and the manifest merger unions them.
     mtext = mtext.replace("<application", queries + "    <application", 1)
 mtext, n3 = re.subn(r'android:label="[^"]*"', 'android:label="城轨通"', mtext)
 assert n3 == 1, "android:label pattern not found in manifest"

@@ -32,26 +32,19 @@ import 'package:url_launcher/url_launcher.dart';
 
 const int _serverPort = 8080;
 
-// Set by main(): if the localhost server cannot start on this device
-// (port clash, socket restrictions on some ROMs), the WebView falls
-// back to loading the bundled page directly from assets - the page is
-// fully self-contained, so everything except relative fetch() still
-// works. An unhandled throw here would kill the app before runApp,
-// which is exactly the "tap the icon and it just dies" failure.
+// Set by _HomePageState._initSource() AFTER the first frame: if the
+// localhost server cannot start on this device (port clash, socket
+// restrictions on some ROMs), the WebView falls back to loading the
+// bundled page directly from assets - the page is fully self-contained,
+// so everything except relative fetch() still works.
+// HISTORY: the server used to be awaited inside main() before runApp;
+// on the user's phone that await never returned, so the app sat on the
+// white launch window forever (white screen, no spinner, no tab bar).
+// Startup must never block the first frame on the server again.
 bool _serverOk = false;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  try {
-    final server = InAppLocalhostServer(
-      documentRoot: 'assets/web',
-      port: _serverPort,
-    );
-    await server.start();
-    _serverOk = true;
-  } catch (_) {
-    _serverOk = false;
-  }
   runApp(const SubwayToolsApp());
 }
 
@@ -151,6 +144,44 @@ class _HomePageState extends State<HomePage> {
   Color _accent = _cityAccents['bj']!;
   bool _loaded = false;
   int _loadRetries = 0;
+
+  // --- White-screen diagnostics (temporary build) ---
+  // The load path is chosen only after the first frame, and every step
+  // is written to an on-screen log so a stuck load names its own step.
+  bool _srcReady = false;
+  final List<String> _diag = <String>[];
+
+  void _log(String msg) {
+    final now = DateTime.now();
+    final ts =
+        '${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
+    _diag.add('$ts $msg');
+    if (_diag.length > 14) _diag.removeAt(0);
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _log('app started - diagnostic build');
+    _initSource();
+  }
+
+  Future<void> _initSource() async {
+    try {
+      final server = InAppLocalhostServer(
+        documentRoot: 'assets/web',
+        port: _serverPort,
+      );
+      await server.start().timeout(const Duration(seconds: 6));
+      _serverOk = true;
+      _log('localhost server OK (port $_serverPort)');
+    } catch (e) {
+      _serverOk = false;
+      _log('server failed: $e -> file mode');
+    }
+    if (mounted) setState(() => _srcReady = true);
+  }
 
   int get _langIndex => _lang == 'zh-Hant' ? 1 : (_lang == 'en' ? 2 : 0);
 
@@ -264,6 +295,7 @@ window.webkit.messageHandlers = window.webkit.messageHandlers || {};
         backgroundColor: const Color(0xFF0C0F16),
         body: Stack(
           children: [
+            if (_srcReady)
             InAppWebView(
               initialUrlRequest: _serverOk
                   ? URLRequest(
@@ -291,6 +323,9 @@ window.webkit.messageHandlers = window.webkit.messageHandlers || {};
               ),
               onWebViewCreated: (controller) {
                 _web = controller;
+                _log(
+                  'webview created: ${_serverOk ? 'http://localhost:$_serverPort/index.html' : 'assets file'}',
+                );
                 controller.addJavaScriptHandler(
                   handlerName: 'tabChanged',
                   callback: (args) {
@@ -353,8 +388,33 @@ window.webkit.messageHandlers = window.webkit.messageHandlers || {};
                   },
                 );
               },
+              onLoadStart: (controller, url) {
+                _log('load start: $url');
+              },
               onLoadStop: (controller, url) {
+                _log('load STOP: $url');
                 if (!_loaded) setState(() => _loaded = true);
+              },
+              onProgressChanged: (controller, progress) {
+                if (progress == 25 ||
+                    progress == 50 ||
+                    progress == 75 ||
+                    progress == 100) {
+                  _log('progress $progress%');
+                }
+              },
+              onConsoleMessage: (controller, consoleMessage) {
+                final m = consoleMessage.message;
+                _log(
+                  'console: ${m.length > 90 ? m.substring(0, 90) : m}',
+                );
+              },
+              onReceivedHttpError: (controller, request, response) {
+                if (request.isForMainFrame ?? false) {
+                  _log(
+                    'HTTP error ${response.statusCode} for ${request.url}',
+                  );
+                }
               },
               onGeolocationPermissionsShowPrompt: (controller, origin) async {
                 final status = await Permission.location.request();
@@ -365,6 +425,7 @@ window.webkit.messageHandlers = window.webkit.messageHandlers || {};
                 );
               },
               onReceivedError: (controller, request, error) {
+                _log('load ERROR: ${error.type} - ${error.description}');
                 // The page is fully offline; a failed main-frame load is
                 // retried at most twice (localhost warm-up race), then we
                 // fall back to the bundled asset file instead of looping.
@@ -400,6 +461,59 @@ window.webkit.messageHandlers = window.webkit.messageHandlers || {};
                 dark: dark,
                 accent: _accent,
                 onTap: _setTab,
+              ),
+            ),
+            // Diagnostic overlay (temporary build): load-path log plus
+            // two manual load switches for on-device bisection.
+            Positioned(
+              left: 8,
+              right: 8,
+              top: MediaQuery.of(context).padding.top + 8,
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                color: const Color(0xCC000000),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      '诊断版 - 页面加载日志',
+                      style: TextStyle(color: Colors.amber, fontSize: 12),
+                    ),
+                    for (final line in _diag)
+                      Text(
+                        line,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                        ),
+                      ),
+                    Row(
+                      children: [
+                        TextButton(
+                          onPressed: () {
+                            _log('manual: load assets file');
+                            _web?.loadFile(
+                              assetFilePath: 'assets/web/index.html',
+                            );
+                          },
+                          child: const Text('文件直载'),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            _log('manual: load example.com');
+                            _web?.loadUrl(
+                              urlRequest: URLRequest(
+                                url: WebUri('https://example.com'),
+                              ),
+                            );
+                          },
+                          child: const Text('示例页'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
