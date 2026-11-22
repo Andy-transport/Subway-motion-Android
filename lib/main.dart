@@ -295,24 +295,34 @@ class _HomePageState extends State<HomePage> {
 
   int get _langIndex => _lang == 'zh-Hant' ? 1 : (_lang == 'en' ? 2 : 0);
 
-  // Render the WebView through Texture Layer Hybrid Composition
-  // instead of full Hybrid Composition. Symptom history: build #17
-  // "zoom is laggy", build #18 (native WebView zoom disabled) still
-  // "very laggy overall" on the user's HyperOS phone. Full Hybrid
-  // Composition synchronises every WebView frame into Flutter's
-  // compositor, which is the slow path for continuously animated web
-  // content like the map's pan/zoom and list scrolling; TLHC lets the
-  // WebView render into a texture instead. Shipped bundled with the
-  // Impeller enable and the tab-bar blur removal - the user asked to
-  // combine the whole load-reduction round into one install.
+  // Composition mode history (all on-device, 2026-11-22): builds up
+  // to #24 used TLHC (displayWithHybridComposition: false). Two
+  // separate symptoms were traced to that path: (1) page scrolling
+  // dead - fixed by the EagerGestureRecognizer below, which applies
+  // in both modes; (2) map pinch/pan still "特别卡" on #24 - the
+  // page coalesces transforms to one per frame, so the cost is
+  // rasterising the multi-MB SVG per frame plus TLHC's texture
+  // round-trip. Build #25 switches to full Hybrid Composition so
+  // the WebView renders to its own surface (see the inline comment
+  // at the parameter). Awaiting the user's on-device comparison.
   Widget _buildWebView() {
     final controllerPlatform = _web.platform;
     if (controllerPlatform is AndroidWebViewController) {
       return WebViewWidget.fromPlatformCreationParams(
         params: AndroidWebViewWidgetCreationParams(
           controller: controllerPlatform,
-          displayWithHybridComposition: false,
-          // TLHC input fix (2026-11-22, on-device report on 1.0.4beta:
+          // Hybrid Composition (2026-11-22, on-device report on
+          // 1.0.4beta: map pinch/pan "特别卡"). The page already
+          // coalesces pan/zoom to one transform per animation frame;
+          // the cost is rasterising the multi-MB city SVG every frame.
+          // Under TLHC each of those frames also makes a texture
+          // round-trip through Flutter's compositor, which is the
+          // bottleneck for full-screen continuous animation. HC gives
+          // the WebView its own Android surface, so frames go straight
+          // to SurfaceFlinger. The tab bar / chips are Flutter widgets
+          // composited above the surface, which HC supports.
+          displayWithHybridComposition: true,
+          // Input fix (2026-11-22, on-device report on 1.0.4beta:
           // the transfer results screen would not scroll - taps worked,
           // drags never reached the WebView's own scroller). In TLHC
           // the platform view only receives a pointer sequence after
