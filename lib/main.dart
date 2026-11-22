@@ -107,6 +107,8 @@ const Map<String, Color> _cityAccents = {
   'cd': Color(0xFF00A3A3),
   'qd': Color(0xFF317C5B),
   'sjz': Color(0xFFE53E30),
+  'tj': Color(0xFFCB333B), // 天津 (.tj-theme accent in template.html)
+  'wx': Color(0xFFEE2737), // 无锡 (.wx-theme accent in template.html)
 };
 
 // Transit-app store jump: the web page's openTransitApp() knows each

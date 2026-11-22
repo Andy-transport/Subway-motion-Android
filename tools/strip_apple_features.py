@@ -137,11 +137,15 @@ assert html.count(old_open) == 1, "openTransitApp App Store fallback not found e
 html = html.replace(old_open, new_open)
 
 # 5. Structure feature removal (see header, item 5).
-# Web tab-bar entry - the click target occurs exactly once.
-assert html.count('setTab(\'structure\')') == 1, "structure tab entry not found exactly once"
-html = remove_balanced(
-    html, '<div class="tab" :class="{ active: tab===\'structure\' }"'
-)
+# Web tab-bar entry: up to 26E112 the page's own tab bar carried a
+# structure tab (exactly one click target). Since 26E115 the iOS tab
+# bar is the system UITabBar and the web markup has no structure tab
+# at all. Remove the entry when present; the assert after the panel
+# removal below covers both cases.
+if html.count("setTab('structure')") == 1:
+    html = remove_balanced(
+        html, '<div class="tab" :class="{ active: tab===\'structure\' }"'
+    )
 # The panel itself. (CSS rules and querySelector('#structurePanel')
 # references remain in the page; they are dead once the element is
 # gone, so the assert checks the DOM id, not the bare word.)
