@@ -6,8 +6,14 @@ set -e
 cd "$(dirname "$0")/.."
 
 SRC="${SUBWAY_MOTION_DIR:-/tmp/Subway-motion}"
+# Android is a test build (1.0.0test3) and tracks the iOS TEST branch
+# (user, 2026-11-22: the Android side syncs the iOS test version's
+# updates - Structure tab, second-round station diagrams, second
+# Douyin author). Set SUBWAY_MOTION_BRANCH=main to build from the
+# formal line again.
+BRANCH="${SUBWAY_MOTION_BRANCH:-test/structure}"
 if [ ! -d "$SRC/web" ]; then
-  git clone --depth 1 https://github.com/Andy-transport/Subway-motion.git "$SRC"
+  git clone --depth 1 --branch "$BRANCH" https://github.com/Andy-transport/Subway-motion.git "$SRC"
 fi
 
 (cd "$SRC/web" && python3 build_offline.py)

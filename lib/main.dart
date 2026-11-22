@@ -68,6 +68,10 @@ const List<_TabSpec> _tabs = [
   _TabSpec('map', Icons.map_outlined, ['线路图', '線路圖', 'Map']),
   _TabSpec('stations', Icons.search, ['车站', '車站', 'Stations']),
   _TabSpec('timetable', Icons.schedule, ['时刻表', '時刻表', 'Timetable']),
+  // Structure tab: synced from the iOS test version (same position,
+  // between Timetable and More). The panel itself is fully web-side;
+  // the shell only mirrors the tab, like the other five.
+  _TabSpec('structure', Icons.view_in_ar, ['结构', '結構', 'Structure']),
   _TabSpec('more', Icons.settings_outlined, ['更多', '更多', 'More']),
 ];
 
