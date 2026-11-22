@@ -58,7 +58,7 @@ import pathlib
 import re
 import sys
 
-ANDROID_VERSION = "1.0.0test3"
+ANDROID_VERSION = "1.0.4beta"
 
 path = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "assets/web/index.html")
 html = path.read_text(encoding="utf-8")
