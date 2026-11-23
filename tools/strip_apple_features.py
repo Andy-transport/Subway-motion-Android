@@ -168,6 +168,17 @@ assert "window.STRUCTURE_INDEX = {" in html, "structure index assignment missing
 _i = html.find("window.STRUCTURE_INDEX = ")
 _j = html.find("window.STRUCTURE_IMGS", _i)
 assert "cdn.jsdelivr.net" in html[_i:_j], "structure index carries no CDN image URLs (index not generated?)"
+# Repo renamed Subway-motion -> Subway-Tools (2026-11-23): jsDelivr
+# does not reliably follow renames, so repoint structure URLs at the
+# new name (same pinned commit; tolerant — 0 once the source tree
+# itself carries the new name).
+_old_cdn = "cdn.jsdelivr.net/gh/Andy-transport/Subway-motion@"
+_n_old = html.count(_old_cdn)
+if _n_old:
+    html = html.replace(
+        _old_cdn, "cdn.jsdelivr.net/gh/Andy-transport/Subway-Tools@"
+    )
+print(f"structure CDN repo rename: {_n_old} URLs repointed to Subway-Tools")
 
 # 7. City capsule fallback -> full web city list (see header, item 7).
 old_toggle = "this.toggleCity();"

@@ -13,7 +13,7 @@ SRC="${SUBWAY_MOTION_DIR:-/tmp/Subway-motion}"
 # formal line again.
 BRANCH="${SUBWAY_MOTION_BRANCH:-test/structure}"
 if [ ! -d "$SRC/web" ]; then
-  git clone --depth 1 --branch "$BRANCH" https://github.com/Andy-transport/Subway-motion.git "$SRC"
+  git clone --depth 1 --branch "$BRANCH" https://github.com/Andy-transport/Subway-Tools.git "$SRC"
 fi
 
 # Structure diagrams ARE part of the Android build (the user
