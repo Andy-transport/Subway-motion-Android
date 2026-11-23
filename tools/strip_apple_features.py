@@ -270,6 +270,14 @@ SHIM = """<script>
   var patchedFor = null, orig = null, dead = false;
   var active = false, svgEl = null;
   var startZ = 0, startPan = null, vZ = 0, vPan = null;
+  // The svg's layout rect, captured once when the gesture begins
+  // (round 2, 2026-11-23: the user still felt slight lag on build
+  // #27). Reading getBoundingClientRect() on every zoomAtPoint call
+  // forced a synchronous layout pass over the ~17 MB page each frame,
+  // and once the CSS transform is applied the live rect MOVES with
+  // the gesture, which also skewed the zoom pivot. The rect cannot
+  // change mid-gesture (the svg is fullscreen), so cache it.
+  var gRect = null;
 
   function applyCss() {
     var k = vZ / startZ;
@@ -278,7 +286,7 @@ SHIM = """<script>
       (vPan.y - k * startPan.y) + 'px) scale(' + k + ')';
   }
   function relPoint(p) {
-    var r = svgEl.getBoundingClientRect();
+    var r = (active && gRect) ? gRect : svgEl.getBoundingClientRect();
     return { x: p.x - r.left, y: p.y - r.top };
   }
   function patch(inst) {
@@ -319,6 +327,7 @@ SHIM = """<script>
     if (!isFinite(startZ) || !startPan || !isFinite(startPan.x)) return;
     vZ = startZ;
     vPan = { x: startPan.x, y: startPan.y };
+    gRect = svgEl.getBoundingClientRect();
     svgEl.style.transformOrigin = '0 0';
     svgEl.style.transformBox = 'border-box';
     svgEl.style.willChange = 'transform';
@@ -330,7 +339,7 @@ SHIM = """<script>
     try {
       var inst = window.panzoom;
       if (inst && inst === patchedFor && orig) {
-        var r = svgEl.getBoundingClientRect();
+        var r = gRect || svgEl.getBoundingClientRect();
         orig.zoomAtPoint.call(inst, vZ, {
           x: r.left + r.width / 2, y: r.top + r.height / 2
         });
@@ -342,6 +351,7 @@ SHIM = """<script>
       svgEl.style.transform = '';
       svgEl.style.willChange = '';
     }
+    gRect = null;
   }
   document.addEventListener('touchstart', function (e) {
     var t = e.target;

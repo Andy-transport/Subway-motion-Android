@@ -54,6 +54,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
+import 'tab_icons.dart';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const SubwayToolsApp());
@@ -75,23 +77,25 @@ class SubwayToolsApp extends StatelessWidget {
 }
 
 class _TabSpec {
-  const _TabSpec(this.key, this.icon, this.labels);
+  const _TabSpec(this.key, this.iconKey, this.labels);
   final String key;
-  final IconData icon;
+  // Key into tabIconBytes (lib/tab_icons.dart): the iOS bar's own
+  // glyphs, at the user's request (2026-11-23).
+  final String iconKey;
   // [zh-Hans, zh-Hant, en] - same wording as the web tab bar.
   final List<String> labels;
 }
 
 const List<_TabSpec> _tabs = [
-  _TabSpec('transfer', Icons.swap_horiz, ['换乘', '換乘', 'Transfer']),
-  _TabSpec('map', Icons.map_outlined, ['线路图', '線路圖', 'Map']),
-  _TabSpec('stations', Icons.search, ['车站', '車站', 'Stations']),
-  _TabSpec('timetable', Icons.schedule, ['时刻表', '時刻表', 'Timetable']),
+  _TabSpec('transfer', 'transfer', ['换乘', '換乘', 'Transfer']),
+  _TabSpec('map', 'map', ['线路图', '線路圖', 'Map']),
+  _TabSpec('stations', 'search', ['车站', '車站', 'Stations']),
+  _TabSpec('timetable', 'timetable', ['时刻表', '時刻表', 'Timetable']),
   // No Structure tab on Android (user, 2026-11-22): the iOS test
   // version has it, but Android stays at five tabs; the structure
   // panel and its image data are stripped from the page at packaging
   // time (tools/strip_apple_features.py).
-  _TabSpec('more', Icons.settings_outlined, ['更多', '更多', 'More']),
+  _TabSpec('more', 'settings', ['更多', '更多', 'More']),
 ];
 
 // City theme colours (same values as the web core per-city themes).
@@ -422,12 +426,36 @@ class _HomePageState extends State<HomePage> {
         }
       },
       child: Scaffold(
-        // Same near-black as the iOS shell: nothing white flashes at
-        // the edges or while the page loads.
-        backgroundColor: const Color(0xFF0C0F16),
-        body: Stack(
-          children: [
-            Positioned.fill(child: _buildWebView()),
+        // Page background colour: visible only in the status-bar
+        // strip (below) and while the page loads.
+        backgroundColor: dark ? const Color(0xFF0C0F16) : Colors.white,
+        body: AnnotatedRegion<SystemUiOverlayStyle>(
+          value: SystemUiOverlayStyle(
+            statusBarColor: Colors.transparent,
+            statusBarIconBrightness:
+                dark ? Brightness.light : Brightness.dark,
+            statusBarBrightness: dark ? Brightness.dark : Brightness.light,
+          ),
+          child: Stack(
+            children: [
+              // The WebView starts BELOW the system status bar
+              // (2026-11-23, user's screenshot: '和状态栏冲突'). The
+              // web core positions its top UI with
+              // env(safe-area-inset-top), which is always 0 in an
+              // Android WebView, so the page's header row (city
+              // capsule + search pill) slid under the status bar and
+              // collided with the clock/icons. iOS reports the real
+              // inset to WKWebView; on Android the shell insets the
+              // view instead - same visual result. The strip above
+              // shows the Scaffold's page-coloured background and the
+              // status icons take the matching brightness.
+              Positioned(
+                left: 0,
+                right: 0,
+                top: MediaQuery.of(context).padding.top,
+                bottom: 0,
+                child: _buildWebView(),
+              ),
             if (!_loaded && _loadError == null)
               const Center(
                 child: CircularProgressIndicator(color: Colors.white70),
@@ -469,20 +497,21 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ),
               ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: _GlassTabBar(
-                tabs: _tabs,
-                current: _tab,
-                langIndex: _langIndex,
-                dark: dark,
-                accent: _accent,
-                onTap: _setTab,
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: _GlassTabBar(
+                  tabs: _tabs,
+                  current: _tab,
+                  langIndex: _langIndex,
+                  dark: dark,
+                  accent: _accent,
+                  onTap: _setTab,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -631,7 +660,14 @@ class _GlassTabItem extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(spec.icon, size: 24, color: color),
+            Image.memory(
+              tabIconBytes[spec.iconKey]!,
+              width: 24,
+              height: 24,
+              color: color,
+              colorBlendMode: BlendMode.srcIn,
+              filterQuality: FilterQuality.medium,
+            ),
             const SizedBox(height: 2),
             Text(
               label,
