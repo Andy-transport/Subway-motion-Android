@@ -1,8 +1,12 @@
 name: Build Android APK
 
 
+
+
 on:
   workflow_dispatch:
+
+
 
 
 jobs:
@@ -12,11 +16,15 @@ jobs:
       - uses: actions/checkout@v4
 
 
+
+
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+
+
 
 
       - name: Set up Flutter
@@ -27,20 +35,37 @@ jobs:
           cache: true
 
 
+
+
       - name: Scaffold Android platform (generated, never committed)
         run: bash tools/scaffold_android.sh
+
+
 
 
       - name: Prepare web assets from Subway-motion
         run: bash tools/prepare_web.sh
 
 
+
+
       - name: Install dependencies
         run: flutter pub get
 
 
+
+
+      - name: Restore signing key
+        run: echo "${{ secrets.ANDROID_KEYSTORE_B64 }}" | base64 -d > "$RUNNER_TEMP/release.p12"
+
       - name: Build release APK
+        env:
+          ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/release.p12
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: subwaytools
         run: flutter build apk --release
+
+
 
 
       - name: Upload APK
@@ -49,4 +74,6 @@ jobs:
           name: Subway-tools-Android-1.0.0test3
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
+
+
 
