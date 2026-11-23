@@ -16,15 +16,17 @@ if [ ! -d "$SRC/web" ]; then
   git clone --depth 1 --branch "$BRANCH" https://github.com/Andy-transport/Subway-motion.git "$SRC"
 fi
 
-# Android ships WITHOUT the Structure feature (user, 2026-11-22), and
-# its diagram data is stripped from the page anyway - so drop the
-# structure index from this throwaway clone before the offline build.
-# build_offline.py treats a missing index as empty data, which also
-# makes this build immune to the test branch's structure-image push
-# state (run #16 failed on a mid-push index referencing images whose
-# .b64 files had not been pushed yet). The source repo is never
-# modified; this only touches the local clone.
-rm -f "$SRC/web/structure/index.json"
+# Structure diagrams ARE part of the Android build (the user
+# reversed the 2026-11-22 exclusion on 2026-11-23, after the
+# Settings '车站结构' row led into a stripped, dead panel). The
+# branch COMMITS web/structure/index.json (maintained by the iOS
+# side); build_offline.py inlines it as-is and the images download
+# on demand from the pinned jsDelivr CDN, exactly like iOS. The old
+# mid-push fragility (run #16) belonged to the pre-26E113 era when
+# images were inlined as base64; the CDN-pinned index is safe to
+# take as committed. (An earlier version of this script deleted the
+# index here - that also silently wiped it from any local checkout
+# passed in via SUBWAY_MOTION_DIR.)
 
 (cd "$SRC/web" && python3 build_offline.py)
 

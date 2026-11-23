@@ -16,15 +16,16 @@ source repo is never modified):
      App Store page. Replace it with a call to the Flutter shell's
      'openStore' handler, which opens the same transit app in the
      phone's own app store (Xiaomi / OPPO / vivo / default store).
-  5. Remove the Structure feature (user, 2026-11-22: Android syncs the
-     iOS test version's other updates, but Structure is not added):
-     the web tab-bar entry, the #structurePanel block, the embedded
-     STRUCTURE_INDEX data (station diagrams, ~20 MB of base64 - the
-     page code reads it through `window.STRUCTURE_INDEX || {}` guards,
-     so an empty object is safe), and the two changelog lines that
-     advertise the feature. (prepare_web.sh already drops the
-     structure index before the offline build, so the data normally
-     never reaches this script; emptying here is the safety net.)
+  5. Structure feature: KEPT since 2026-11-23 (the user reversed the
+     2026-11-22 exclusion after tapping the Settings '车站结构' row
+     into the dead panel the old strip left behind: '安卓那个结构图
+     打不开'). prepare_web.sh now generates the structure index so
+     the panel, its station list and the on-demand CDN image URLs
+     work exactly like iOS. This script only asserts the panel and a
+     non-empty CDN-backed index survived, and still removes the web
+     tab-bar's structure entry when one exists (pre-26E115 pages):
+     the Flutter shell owns the tab bar and has no structure tab -
+     the feature opens from the Settings row, as on iOS.
   6. Bake the native-bridge shim into the page, right after <head> so
      it runs before every page script. The shell is the official
      webview_flutter (flutter_inappwebview never attached on the
@@ -58,6 +59,15 @@ source repo is never modified):
      outside gestures; self-disables on any error.
      Picking a city there lands back on the transfer tab (the web
      core's switchCity behaviour), where the tap started.
+  9. Redemption codes: Android uses its OWN tables (user, 2026-11-23:
+     '安卓兑换码重新做'). The iOS creator arrays are emptied (the
+     iOS creator codes must not redeem on Android, and no Android
+     creator set exists yet), and when the page carries the tester
+     arrays (26E123+) their contents are replaced with the Android
+     tester set from tools/android_redeem.json (50 code/ID pairs,
+     user-supplied 2026-11-23, verified unique). On a pre-123 page
+     the tester swap is skipped with a loud note - the delivery
+     verification must then not claim the codes are in.
 
 Fails loudly if an expected block is not found, so a future web-core
 change cannot silently ship the Siri UI or the iOS version again.
@@ -144,82 +154,68 @@ new_open = "if (window.flutter_inappwebview) { window.flutter_inappwebview.callH
 assert html.count(old_open) == 1, "openTransitApp App Store fallback not found exactly once"
 html = html.replace(old_open, new_open)
 
-# 5. Structure feature removal (see header, item 5).
-# Web tab-bar entry: up to 26E112 the page's own tab bar carried a
-# structure tab (exactly one click target). Since 26E115 the iOS tab
-# bar is the system UITabBar and the web markup has no structure tab
-# at all. Remove the entry when present; the assert after the panel
-# removal below covers both cases.
+# 5. Structure feature: kept (see header, item 5). Only the web
+# tab-bar entry is removed when present (pre-26E115 pages carried
+# one; the Flutter shell's five tabs have no structure tab, and the
+# feature opens from the Settings row like on iOS).
 if html.count("setTab('structure')") == 1:
     html = remove_balanced(
         html, '<div class="tab" :class="{ active: tab===\'structure\' }"'
     )
-# The panel itself. (CSS rules and querySelector('#structurePanel')
-# references remain in the page; they are dead once the element is
-# gone, so the assert checks the DOM id, not the bare word.)
-html = remove_balanced(html, '<div id="structurePanel"')
-assert 'id="structurePanel"' not in html, "structure panel still present"
-assert "setTab('structure')" not in html, "structure tab still present"
-# The embedded station-diagram data: two assignments - STRUCTURE_INDEX
-# (station -> image file names + sources, ~18 KB) and STRUCTURE_IMGS
-# (file name -> data URI, ~20 MB). Replace both objects with an empty
-# object; the page code reads them via `window.X || {}` guards, and
-# with the panel gone the data is unreachable anyway. JSON-aware brace
-# scan: strings may contain braces, base64 payloads contain no quotes.
-def empty_assignment(text: str, marker: str) -> tuple[str, int]:
-    i = text.find(marker)
-    assert i != -1, f"{marker} assignment not found"
-    j = text.find("{", i)
-    assert j != -1, f"{marker} object start not found"
-    depth = 0
-    k = j
-    in_str = False
-    esc = False
-    while k < len(text):
-        c = text[k]
-        if in_str:
-            if esc:
-                esc = False
-            elif c == "\\":
-                esc = True
-            elif c == '"':
-                in_str = False
-        elif c == '"':
-            in_str = True
-        elif c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-            if depth == 0:
-                break
-        k += 1
-    assert depth == 0 and k < len(text), f"{marker} object not closed"
-    return text[:j] + "{}" + text[k + 1:], k + 1 - j
-
-
-html, n_idx = empty_assignment(html, "window.STRUCTURE_INDEX = ")
-html, n_imgs = empty_assignment(html, "window.STRUCTURE_IMGS = ")
-removed_bytes = n_idx + n_imgs
-# No size assert on the emptied data: prepare_web.sh drops the
-# structure index before the offline build, so both objects normally
-# arrive already empty. empty_assignment() above still asserts each
-# assignment exists and is replaced, which is the invariant that
-# matters here.
-# Changelog lines that advertise the removed feature (one physical
-# line each in the built page; length-guarded so a future minified
-# layout fails loudly instead of eating the script).
-for frag in ("「结构」栏目", "结构详情页配备"):
-    lines = html.split("\n")
-    hits = [ln for ln in lines if frag in ln]
-    assert len(hits) == 1 and len(hits[0]) < 5000, f"changelog line not unique/short: {frag}"
-    html = "\n".join(ln for ln in lines if frag not in ln)
-    assert frag not in html, f"changelog line still present: {frag}"
+assert "setTab('structure')" not in html, "structure web tab still present"
+assert 'id="structurePanel"' in html, "structure panel missing"
+assert "window.STRUCTURE_INDEX = {" in html, "structure index assignment missing"
+_i = html.find("window.STRUCTURE_INDEX = ")
+_j = html.find("window.STRUCTURE_IMGS", _i)
+assert "cdn.jsdelivr.net" in html[_i:_j], "structure index carries no CDN image URLs (index not generated?)"
 
 # 7. City capsule fallback -> full web city list (see header, item 7).
 old_toggle = "this.toggleCity();"
 assert html.count(old_toggle) == 1, "city capsule toggle fallback not found exactly once"
 html = html.replace(old_toggle, "this.setTab('more'); this.showCitySub = true;")
 assert "this.toggleCity();" not in html, "city toggle fallback still present"
+
+# 9. Redemption code tables -> Android's own (see header, item 9).
+import json as _redeem_json
+
+_redeem = _redeem_json.loads(
+    pathlib.Path(__file__).with_name("android_redeem.json").read_text(encoding="utf-8")
+)
+
+
+def replace_array_body(text: str, varname: str, items: list) -> str:
+    marker = f"var {varname} = ["
+    i = text.find(marker)
+    assert i != -1, f"{varname} array not found"
+    j = text.find("]", i)
+    assert j != -1, f"{varname} array not closed"
+    body = ", ".join(f"'{v}'" for v in items)
+    return text[: i + len(marker)] + body + text[j:]
+
+
+def array_body(text: str, varname: str) -> list:
+    marker = f"var {varname} = ["
+    i = text.find(marker)
+    assert i != -1, f"{varname} array not found"
+    j = text.find("]", i)
+    return re.findall(r"'([^']*)'", text[i + len(marker):j])
+
+
+html = replace_array_body(html, "CREATOR_REDEEM_CODES", [])
+html = replace_array_body(html, "CREATOR_IDS", [])
+# Assert on the array bodies, not raw strings: a template comment
+# legitimately quotes an iOS creator code as a normalization example.
+assert array_body(html, "CREATOR_REDEEM_CODES") == [], "creator codes not emptied"
+assert array_body(html, "CREATOR_IDS") == [], "creator IDs not emptied"
+tester_swapped = False
+if "var TESTER_REDEEM_CODES = [" in html:
+    html = replace_array_body(html, "TESTER_REDEEM_CODES", _redeem["tester_codes"])
+    html = replace_array_body(html, "TESTER_IDS", _redeem["tester_ids"])
+    assert array_body(html, "TESTER_REDEEM_CODES") == _redeem["tester_codes"], "tester codes mismatch"
+    assert array_body(html, "TESTER_IDS") == _redeem["tester_ids"], "tester IDs mismatch"
+    tester_swapped = True
+else:
+    print("NOTE: no TESTER arrays in page (pre-26E123) - Android tester codes NOT included")
 
 # 6. Bridge shim (see header, item 6).
 SHIM = """<script>
@@ -377,6 +373,7 @@ path.write_text(html, encoding="utf-8")
 print(
     "strip_apple_features: Siri row + sub-page removed, store jump patched, version set to",
     ANDROID_VERSION,
-    f"({n_v} ternaries + changelog head + row), structure removed (index data {removed_bytes} bytes) in",
+    f"({n_v} ternaries + changelog head + row), structure kept (CDN on-demand), "
+    f"redeem tables: creator emptied, tester {'swapped to Android set' if tester_swapped else 'NOT swapped (pre-123 page)'} in",
     path,
 )
