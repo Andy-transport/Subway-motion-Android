@@ -59,21 +59,58 @@ if nvn == 0 and "versionName" not in new:
     )
 gradle.write_text(new, encoding="utf-8")
 
-# Disable R8 minify/shrink for release. R8 ran on the scaffolded project
-# and, combined with the MainActivity package mismatch below, stripped the
-# launcher activity and most of the Flutter embedding out of the APK
-# (builds #3-#6: installs fine, crashes instantly, no UI). Even with the
-# package fixed, this sideloaded app gains nothing from shrinking.
-if "isMinifyEnabled" not in new and gradle.suffix == ".kts":
+# Release build type: disable R8 minify/shrink, and sign with the
+# STABLE release key when CI provides one.
+# - R8 ran on the scaffolded project and, combined with the
+#   MainActivity package mismatch below, stripped the launcher
+#   activity and most of the Flutter embedding out of the APK
+#   (builds #3-#6: installs fine, crashes instantly, no UI). Even
+#   with the package fixed, this sideloaded app gains nothing from
+#   shrinking.
+# - Signing: the template signs release with the debug key, which
+#   every ephemeral CI runner generates FRESH - so every build had a
+#   different signature and Android refused to install builds over
+#   each other (INSTALL_FAILED_UPDATE_INCOMPATIBLE, error -7, hit by
+#   the user on build #29). CI now decodes one fixed keystore from a
+#   repo secret and passes ANDROID_KEYSTORE_FILE /
+#   ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS as env vars; when
+#   present, release uses the "releaseStable" config below, otherwise
+#   it falls back to the debug key (local scaffolds).
+if gradle.suffix == ".kts":
     pat = 'signingConfig = signingConfigs.getByName("debug")'
-    if pat in new:
+    assert pat in new, "release signingConfig line not found in gradle template"
+    if "isMinifyEnabled" not in new:
         new = new.replace(
             pat,
             pat + "\n            isMinifyEnabled = false\n            isShrinkResources = false",
             1,
         )
-        gradle.write_text(new, encoding="utf-8")
         print("patch_android: release minify/shrink disabled")
+    if "releaseStable" not in new:
+        block = (
+            "    signingConfigs {\n"
+            '        create("releaseStable") {\n'
+            '            val ksFile = System.getenv("ANDROID_KEYSTORE_FILE")\n'
+            "            if (ksFile != null) {\n"
+            "                storeFile = file(ksFile)\n"
+            '                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")\n'
+            '                keyAlias = System.getenv("ANDROID_KEY_ALIAS")\n'
+            '                keyPassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")\n'
+            "            }\n"
+            "        }\n"
+            "    }\n"
+        )
+        anchor = "    buildTypes {"
+        assert anchor in new, "buildTypes anchor not found in gradle template"
+        new = new.replace(anchor, block + anchor, 1)
+    new = new.replace(
+        pat,
+        'signingConfig = if (System.getenv("ANDROID_KEYSTORE_FILE") != null) '
+        'signingConfigs.getByName("releaseStable") else signingConfigs.getByName("debug")',
+        1,
+    )
+    gradle.write_text(new, encoding="utf-8")
+    print("patch_android: stable release signing wired (env keystore, debug fallback)")
 
 manifest = root / "app" / "src" / "main" / "AndroidManifest.xml"
 mtext = manifest.read_text(encoding="utf-8")
