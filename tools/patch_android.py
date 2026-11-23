@@ -139,6 +139,20 @@ perms = (
 )
 if "ACCESS_FINE_LOCATION" not in mtext:
     mtext = mtext.replace("<application", perms + "    <application", 1)
+# INTERNET: the flutter scaffold's release manifest does NOT declare
+# it (only the debug/profile manifests do), and nothing in the app
+# fetched remote content until the station-structure images went
+# on-demand (CDN fetch from the WebView). Without it every structure
+# download failed on device with the page's generic load-failed
+# message (user report on build #29, Shenzhen Luohu). Add it always.
+if "android.permission.INTERNET" not in mtext:
+    mtext = mtext.replace(
+        "<application",
+        '    <uses-permission android:name="android.permission.INTERNET"/>\n'
+        "    <application",
+        1,
+    )
+    print("patch_android: INTERNET permission added")
 # Renderer: Impeller (Flutter's new renderer) is left at the Flutter
 # default, i.e. ENABLED, at the user's explicit request (2026-11-22)
 # for the load-reduction round. An EnableImpeller=false meta-data
