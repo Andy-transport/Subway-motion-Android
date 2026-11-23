@@ -76,7 +76,7 @@ import pathlib
 import re
 import sys
 
-ANDROID_VERSION = "1.0.4beta"
+ANDROID_VERSION = "1.0.5beta"
 
 path = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "assets/web/index.html")
 html = path.read_text(encoding="utf-8")
@@ -312,6 +312,34 @@ SHIM = """<script>
       if (typeof oc === 'function') { try { oc(ev); } catch (e) {} }
     }
   };
+})();
+// Native map state (route 2, user 2026-11-24): the Flutter shell
+// renders the map tab natively from bundled rasters and needs to
+// know which Beijing map the page is set to - the track layout
+// (配线图) or the schematic (线路图). pickBjMapType is the only
+// writer of bjMapType; once the Vue app exists, wrap it and report
+// the initial value + every change on the mapState channel.
+(function () {
+  window._metroMapShim = true;
+  function post(t) {
+    var ch = window.mapState;
+    if (ch && typeof ch.postMessage === 'function') {
+      try { ch.postMessage(JSON.stringify({ bjType: t === 'line' ? 'line' : 'track' })); } catch (e) {}
+    }
+  }
+  var tries = 0;
+  var timer = setInterval(function () {
+    tries++;
+    var app = window.metroApp;
+    if (app && typeof app.pickBjMapType === 'function' && app.bjMapType !== undefined) {
+      clearInterval(timer);
+      var orig = app.pickBjMapType;
+      app.pickBjMapType = function (t) { var r = orig.call(app, t); post(app.bjMapType); return r; };
+      post(app.bjMapType);
+    } else if (tries > 60) {
+      clearInterval(timer);
+    }
+  }, 500);
 })();
 // Android smooth zoom (user report 2026-11-22: map pinch/pan "很卡很
 // 卡", asked for stepless zoom and supplied a native ZoomImageView

@@ -55,6 +55,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
+import 'native_map.dart';
 import 'tab_icons.dart';
 
 Future<void> main() async {
@@ -100,6 +101,30 @@ const List<_TabSpec> _tabs = [
 ];
 
 // City theme colours (same values as the web core per-city themes).
+/// City display names for the native map's capsule replica,
+/// [zh-Hans, zh-Hant, English] like the tab labels.
+const Map<String, List<String>> _cityNames = {
+  'bj': ['北京', '北京', 'Beijing'],
+  'sy': ['沈阳', '瀋陽', 'Shenyang'],
+  'sh': ['上海', '上海', 'Shanghai'],
+  'hb': ['哈尔滨', '哈爾濱', 'Harbin'],
+  'dl': ['大连', '大連', 'Dalian'],
+  'jh': ['金华', '金華', 'Jinhua'],
+  'cz': ['常州', '常州', 'Changzhou'],
+  'cq': ['重庆', '重慶', 'Chongqing'],
+  'cc': ['长春', '長春', 'Changchun'],
+  'sz': ['深圳', '深圳', 'Shenzhen'],
+  'cd': ['成都', '成都', 'Chengdu'],
+  'qd': ['青岛', '青島', 'Qingdao'],
+  'sjz': ['石家庄', '石家莊', 'Shijiazhuang'],
+  'tj': ['天津', '天津', 'Tianjin'],
+  'wx': ['无锡', '無錫', 'Wuxi'],
+};
+
+const List<String> _searchLabels = ['搜车站', '搜車站', 'Search stations'];
+const List<String> _startLabels = ['设为起点', '設為起點', 'Set as start'];
+const List<String> _destLabels = ['设为终点', '設為終點', 'Set as destination'];
+
 const Map<String, Color> _cityAccents = {
   'bj': Color(0xFF003380),
   'sy': Color(0xFFD4B686),
@@ -177,6 +202,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   Color _accent = _cityAccents['bj']!;
   bool _loaded = false;
   String? _loadError;
+  String _city = 'bj';
+  // Beijing has two maps (track layout / schematic); the page owns
+  // the choice (More page, persisted) and the shim reports it on the
+  // mapState channel. Other cities have a single map.
+  String _bjMapType = 'track';
+  Map<String, MapAsset>? _mapAssets;
 
   // The page resolves its "system" theme from the WebView's
   // prefers-color-scheme, which an Android WebView derives from the
@@ -257,9 +288,27 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         onMessageReceived: (message) {
           final v = _decodeMessage(message.message);
           if (v is Map) {
+            final c = v['city'];
+            if (c is String && c != _city) {
+              setState(() => _city = c);
+            }
             final accent = _cityAccents[v['city']];
             if (accent != null && accent != _accent) {
               setState(() => _accent = accent);
+            }
+          }
+        },
+      )
+      ..addJavaScriptChannel(
+        'mapState',
+        onMessageReceived: (message) {
+          final v = _decodeMessage(message.message);
+          if (v is Map) {
+            final t = v['bjType'];
+            if (t is String &&
+                (t == 'track' || t == 'line') &&
+                t != _bjMapType) {
+              setState(() => _bjMapType = t);
             }
           }
         },
@@ -332,6 +381,44 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       });
     }
     _web.loadFlutterAsset('assets/web/index.html');
+    unawaited(_loadMapAssets());
+  }
+
+  // Native map rasters (assets/maps/, rendered from the same source
+  // SVGs as the web maps). A missing or unreadable manifest simply
+  // leaves the native map off; the web map remains as the fallback.
+  Future<void> _loadMapAssets() async {
+    try {
+      final raw = await rootBundle.loadString('assets/maps/maps.json');
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        final out = <String, MapAsset>{};
+        decoded.forEach((k, v) {
+          final a = MapAsset.fromJson(v);
+          if (a != null) out[k.toString()] = a;
+        });
+        if (mounted && out.isNotEmpty) setState(() => _mapAssets = out);
+      }
+    } catch (_) {
+      // No native maps in this build; nothing to do.
+    }
+  }
+
+  String get _mapKey =>
+      _city == 'bj' ? (_bjMapType == 'line' ? 'bj-line' : 'bj-track') : _city;
+
+  Future<String?> _nativeMapTap(double x, double y, double rz) async {
+    try {
+      final r = await _web.runJavaScriptReturningResult(
+        'JSON.stringify(window.metroApp && window.metroApp.mapTapAt ? '
+        'window.metroApp.mapTapAt(${x.toStringAsFixed(1)}, '
+        '${y.toStringAsFixed(1)}, ${rz.toStringAsFixed(3)}) : null)',
+      );
+      final v = _decodeMessage(r.toString());
+      return v is String ? v : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   int get _langIndex => _lang == 'zh-Hant' ? 1 : (_lang == 'en' ? 2 : 0);
@@ -390,6 +477,37 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     await _web.runJavaScript(
       "window.metroApp && window.metroApp.setTab('$key')",
     );
+  }
+
+  // Swipe the tab bar sideways to switch pages (user 2026-11-24).
+  // The drag recognizer sits on the bar itself; item taps keep
+  // working because the arena only hands the gesture to the drag
+  // once it moves horizontally past the touch slop. Swipe left goes
+  // to the next tab, right to the previous, clamped at both ends.
+  double _tabDragDx = 0;
+
+  void _onTabBarDragUpdate(DragUpdateDetails d) {
+    _tabDragDx += d.delta.dx;
+  }
+
+  void _onTabBarDragEnd(DragEndDetails d) {
+    final v = d.primaryVelocity ?? 0;
+    var dir = 0;
+    if (_tabDragDx <= -40 || v <= -300) {
+      dir = 1;
+    } else if (_tabDragDx >= 40 || v >= 300) {
+      dir = -1;
+    }
+    _tabDragDx = 0;
+    if (dir == 0 || !_loaded || _loadError != null) return;
+    final i = _tabs.indexWhere((t) => t.key == _tab);
+    if (i < 0) return;
+    final j = (i + dir).clamp(0, _tabs.length - 1);
+    if (j != i) unawaited(_setTab(_tabs[j].key));
+  }
+
+  void _onTabBarDragCancel() {
+    _tabDragDx = 0;
   }
 
   // Open the transit app (by Apple id from the web page) in this
@@ -493,6 +611,55 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 bottom: 0,
                 child: _buildWebView(),
               ),
+              // Native map (route 2, user 2026-11-24): on the map tab
+              // a platform-rendered raster covers the WebView's own
+              // vector map, whose per-frame re-rasterization is the
+              // map lag. Taps and endpoint picks proxy into the page,
+              // so planning behaviour is unchanged. Falls back to the
+              // web map whenever no raster exists for the city.
+              if (_loaded &&
+                  _loadError == null &&
+                  _tab == 'map' &&
+                  _mapAssets != null &&
+                  _mapAssets![_mapKey] != null)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: MediaQuery.of(context).padding.top,
+                  bottom: 0,
+                  child: NativeMapView(
+                    key: ValueKey('nativemap-$_mapKey'),
+                    asset: _mapAssets![_mapKey]!,
+                    dark: dark,
+                    accent: _accent,
+                    cityLabel:
+                        (_cityNames[_city] ?? _cityNames['bj']!)[_langIndex],
+                    searchLabel: _searchLabels[_langIndex],
+                    startLabel: _startLabels[_langIndex],
+                    destLabel: _destLabels[_langIndex],
+                    onCapsuleTap: () => unawaited(
+                      _web.runJavaScript(
+                        'window.metroApp && window.metroApp.showCityMenu()',
+                      ),
+                    ),
+                    onSearchTap: () => unawaited(
+                      _web.runJavaScript(
+                        'window.metroApp && window.metroApp.openStations()',
+                      ),
+                    ),
+                    onTapSvg: _nativeMapTap,
+                    onSetEndpoint: (which) => unawaited(
+                      _web.runJavaScript(
+                        "window.metroApp && window.metroApp.mapSetEndpoint('$which')",
+                      ),
+                    ),
+                    onDismissCard: () => unawaited(
+                      _web.runJavaScript(
+                        'window.metroApp && (window.metroApp.mapCard = null)',
+                      ),
+                    ),
+                  ),
+                ),
             if (!_loaded && _loadError == null)
               const Center(
                 child: CircularProgressIndicator(color: Colors.white70),
@@ -538,13 +705,19 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 left: 0,
                 right: 0,
                 bottom: 0,
-                child: _GlassTabBar(
-                  tabs: _tabs,
-                  current: _tab,
-                  langIndex: _langIndex,
-                  dark: dark,
-                  accent: _accent,
-                  onTap: _setTab,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.deferToChild,
+                  onHorizontalDragUpdate: _onTabBarDragUpdate,
+                  onHorizontalDragEnd: _onTabBarDragEnd,
+                  onHorizontalDragCancel: _onTabBarDragCancel,
+                  child: _GlassTabBar(
+                    tabs: _tabs,
+                    current: _tab,
+                    langIndex: _langIndex,
+                    dark: dark,
+                    accent: _accent,
+                    onTap: _setTab,
+                  ),
                 ),
               ),
             ],

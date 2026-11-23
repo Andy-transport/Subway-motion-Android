@@ -43,3 +43,13 @@ cp "$SRC/web/trains.json" assets/web/trains.json
 
 python3 tools/strip_apple_features.py assets/web/index.html
 ls -lh assets/web/
+
+# Native map rasters (route 2): the repo stores them base64-encoded
+# under tools/maps_b64/ (the push tooling is text-only); decode them
+# into the asset directory next to the committed maps.json manifest.
+mkdir -p assets/maps
+for b in tools/maps_b64/*.b64; do
+  name="$(basename "$b" .b64)"
+  base64 -d "$b" > "assets/maps/$name"
+done
+ls -lh assets/maps/

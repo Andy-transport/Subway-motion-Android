@@ -16,3 +16,6 @@ assets/web/*
 *.iml
 .idea/
 .DS_Store
+
+# Native map rasters are decoded from tools/maps_b64/ at build time
+assets/maps/*.webp

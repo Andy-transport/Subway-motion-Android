@@ -4,7 +4,7 @@
 - applicationId / namespace -> com.andytransport.metro (matches the iOS
   bundle id; Android and iOS namespaces are independent)
 - app label -> "Subway tools"
-- versionName -> "1.0.4beta" (the user's Android version string, set
+- versionName -> "1.0.5beta" (the user's Android version string, set
   2026-11-22; pubspec keeps the semver core 1.0.0+1, the template's
   flutter.versionName assignment is replaced below)
 - AGP is deliberately NOT pinned here: flutter_inappwebview_android
@@ -45,16 +45,16 @@ assert n2 == 1, "applicationId pattern not found in app gradle file"
 # fired because the template already contains the word versionName.
 # Fall back to inserting when no versionName line exists at all.
 new, nvn = re.subn(
-    r"versionName\s*=\s*flutter\.versionName", 'versionName = "1.0.4beta"', new
+    r"versionName\s*=\s*flutter\.versionName", 'versionName = "1.0.5beta"', new
 )
 if nvn == 0:
     new, nvn = re.subn(
-        r"versionName\s+flutter\.versionName", 'versionName "1.0.4beta"', new
+        r"versionName\s+flutter\.versionName", 'versionName "1.0.5beta"', new
     )
 if nvn == 0 and "versionName" not in new:
     new = new.replace(
         'applicationId = "com.andytransport.metro"',
-        'applicationId = "com.andytransport.metro"\n        versionName = "1.0.4beta"',
+        'applicationId = "com.andytransport.metro"\n        versionName = "1.0.5beta"',
         1,
     )
 gradle.write_text(new, encoding="utf-8")
