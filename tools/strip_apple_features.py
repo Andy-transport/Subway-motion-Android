@@ -256,6 +256,63 @@ SHIM = """<script>
     callHandler: function (name, m) { send(name, m); return Promise.resolve(null); }
   };
 })();
+// System dark mode (user 2026-11-24: "安卓适配深浅模式"). The page
+// resolves its "system" theme through
+// matchMedia('(prefers-color-scheme: dark)') - applyTheme() reads it
+// and a 'change' listener re-applies on flips. iOS injects the value
+// natively (_metroInitDark); an Android WebView instead derives the
+// color scheme from the host app theme, and the Flutter scaffold's
+// theme is not night-aware, so the query reports light forever and
+// the page never follows the phone's dark mode. Override the
+// color-scheme query with a controllable MediaQueryList: it starts
+// at the WebView's own answer and the Flutter shell pushes the real
+// platform brightness via window._metroSetSystemDark() on page start
+// and on every platform brightness change, which fires the page's
+// 'change' listener exactly like a native flip.
+(function () {
+  window._metroThemeShim = true;
+  var origMM = window.matchMedia ? window.matchMedia.bind(window) : null;
+  var sysDark = false;
+  try { sysDark = !!(origMM && origMM('(prefers-color-scheme: dark)').matches); } catch (e) {}
+  var listeners = [];
+  var cache = {};
+  function makeMQL(q) {
+    var isDarkQ = q.indexOf('dark') !== -1;
+    var mql = {
+      media: q,
+      onchange: null,
+      addEventListener: function (t, fn) { if (t === 'change' && fn) listeners.push({ q: q, fn: fn, mql: mql }); },
+      removeEventListener: function (t, fn) { listeners = listeners.filter(function (L) { return L.fn !== fn; }); },
+      addListener: function (fn) { if (fn) listeners.push({ q: q, fn: fn, mql: mql }); },
+      removeListener: function (fn) { listeners = listeners.filter(function (L) { return L.fn !== fn; }); },
+      dispatchEvent: function () { return false; }
+    };
+    Object.defineProperty(mql, 'matches', {
+      get: function () { return isDarkQ ? sysDark : !sysDark; }
+    });
+    return mql;
+  }
+  window.matchMedia = function (q) {
+    if (typeof q === 'string' && q.indexOf('prefers-color-scheme') !== -1) {
+      if (!cache[q]) cache[q] = makeMQL(q);
+      return cache[q];
+    }
+    if (origMM) return origMM(q);
+    return { media: q, matches: false, addEventListener: function () {}, removeEventListener: function () {}, addListener: function () {}, removeListener: function () {} };
+  };
+  window._metroSetSystemDark = function (d) {
+    d = !!d;
+    if (d === sysDark) return;
+    sysDark = d;
+    var snapshot = listeners.slice();
+    for (var i = 0; i < snapshot.length; i++) {
+      var ev = { matches: snapshot[i].q.indexOf('dark') !== -1 ? sysDark : !sysDark, media: snapshot[i].q };
+      try { snapshot[i].fn(ev); } catch (e) {}
+      var oc = snapshot[i].mql && snapshot[i].mql.onchange;
+      if (typeof oc === 'function') { try { oc(ev); } catch (e) {} }
+    }
+  };
+})();
 // Android smooth zoom (user report 2026-11-22: map pinch/pan "很卡很
 // 卡", asked for stepless zoom and supplied a native ZoomImageView
 // reference - an ImageView whose gestures only move a Matrix over an
@@ -379,6 +436,7 @@ assert head_pos != -1, "<head> not found"
 insert_at = head_pos + len("<head>")
 html = html[:insert_at] + "\n" + SHIM + html[insert_at:]
 assert html.count("_metroAndroidShim") == 1, "shim not inserted exactly once"
+assert html.count("window._metroSetSystemDark = function") == 1, "theme shim not inserted exactly once"
 
 path.write_text(html, encoding="utf-8")
 print(

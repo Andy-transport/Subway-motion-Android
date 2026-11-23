@@ -40,6 +40,7 @@
 // Shortcuts settings row and sub-page from the web page at packaging
 // time, and no addShortcut channel exists here.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:ui';
 
@@ -168,7 +169,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   late final WebViewController _web;
   String _tab = 'map'; // the web page opens on the map, same as iOS
   bool _dark = false;
@@ -177,9 +178,41 @@ class _HomePageState extends State<HomePage> {
   bool _loaded = false;
   String? _loadError;
 
+  // The page resolves its "system" theme from the WebView's
+  // prefers-color-scheme, which an Android WebView derives from the
+  // host app theme - the Flutter scaffold theme is not night-aware,
+  // so it reports light forever. The baked-in shim replaces that
+  // query with a controllable one; the shell pushes the real
+  // platform brightness here (user 2026-11-24: adapt light/dark).
+  void _pushSystemDark() {
+    final dark =
+        WidgetsBinding.instance.platformDispatcher.platformBrightness ==
+        Brightness.dark;
+    unawaited(
+      _web
+          .runJavaScript(
+            'window._metroSetSystemDark && '
+            'window._metroSetSystemDark(${dark ? 'true' : 'false'})',
+          )
+          .catchError((Object _) {}),
+    );
+  }
+
+  @override
+  void didChangePlatformBrightness() {
+    _pushSystemDark();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _web = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       // The map's pinch zoom is handled inside the page (svg-pan-zoom).
@@ -189,7 +222,11 @@ class _HomePageState extends State<HomePage> {
       ..setBackgroundColor(const Color(0xFF0C0F16))
       ..setNavigationDelegate(
         NavigationDelegate(
+          onPageStarted: (url) {
+            _pushSystemDark();
+          },
           onPageFinished: (url) {
+            _pushSystemDark();
             if (!_loaded || _loadError != null) {
               setState(() {
                 _loaded = true;
