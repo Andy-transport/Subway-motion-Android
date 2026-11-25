@@ -19,3 +19,4 @@ assets/web/*
 
 # Native map rasters are decoded from tools/maps_b64/ at build time
 assets/maps/*.webp
+assets/maps/t2/*.webp

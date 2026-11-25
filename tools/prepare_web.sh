@@ -53,3 +53,13 @@ for b in tools/maps_b64/*.b64; do
   base64 -d "$b" > "assets/maps/$name"
 done
 ls -lh assets/maps/
+
+# Hybrid-zoom tiles (8192 px renders cut into 1024 px tiles), same
+# base64 storage convention under tools/maps_b64_t2/.
+mkdir -p assets/maps/t2
+for b in tools/maps_b64_t2/*.b64; do
+  [ -e "$b" ] || continue
+  name="$(basename "$b" .b64)"
+  base64 -d "$b" > "assets/maps/t2/$name"
+done
+ls assets/maps/t2/ | wc -l

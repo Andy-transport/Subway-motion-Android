@@ -107,17 +107,22 @@ def remove_balanced(text: str, start_marker: str, tag: str = "div") -> str:
     raise AssertionError("unbalanced block: ran off the end")
 
 
-# 1. Settings row that opens the Siri sub-page.
-html = remove_balanced(html, '<div class="more-row" @click="showSiriSub = true">')
+# 1. Settings row that opens the Siri sub-page. 26F128 removed the
+# Siri shortcuts feature from the page entirely (user: 砍掉快捷指令
+# 功能）, so from that build on there is nothing to strip — tolerate
+# the markers being absent, but still assert absence afterwards so
+# a page that brings Siri back in another shape fails loudly.
+if '<div class="more-row" @click="showSiriSub = true">' in html:
+    html = remove_balanced(html, '<div class="more-row" @click="showSiriSub = true">')
 # 2. The Siri sub-page itself. Its class list has changed before
 # ("more-sub" -> "more-sub more-sub-siri"), so anchor on the v-show
 # attribute and take the enclosing <div ...> as the marker.
 anchor = html.find('v-show="showSiriSub"')
-assert anchor != -1, "Siri sub-page anchor not found"
-div_start = html.rfind('<div', 0, anchor)
-div_end = html.find('>', anchor)
-assert div_start != -1 and div_end != -1, "Siri sub-page div not found"
-html = remove_balanced(html, html[div_start:div_end + 1])
+if anchor != -1:
+    div_start = html.rfind('<div', 0, anchor)
+    div_end = html.find('>', anchor)
+    assert div_start != -1 and div_end != -1, "Siri sub-page div not found"
+    html = remove_balanced(html, html[div_start:div_end + 1])
 
 assert "showSiriSub = true" not in html, "Siri row still present"
 assert 'v-show="showSiriSub"' not in html, "Siri sub-page still present"
@@ -185,6 +190,55 @@ old_toggle = "this.toggleCity();"
 assert html.count(old_toggle) == 1, "city capsule toggle fallback not found exactly once"
 html = html.replace(old_toggle, "this.setTab('more'); this.showCitySub = true;")
 assert "this.toggleCity();" not in html, "city toggle fallback still present"
+
+# 10. Map downloads (26E126+ download-on-use) -> Android behaviour.
+# The Flutter shell bundles every city's map as a native raster, so
+# the page must never gate a city switch on its own SVG download:
+# (a) every city starts as 'ready' in mapState (the city list shows
+# no download buttons and row taps switch at once; ensureMap still
+# fetches + caches the page-level SVG in the background when
+# online), and (b) downloadCityMap no longer awaits the fetch
+# before switching (an offline first switch would otherwise dead-
+# end even though the native map is already on the device).
+_ms = html.find("mapState: {")
+assert _ms != -1, "mapState init not found"
+_ms_end = html.find("}", _ms)
+assert _ms_end != -1, "mapState init not closed"
+_ms_block = html[_ms:_ms_end]
+assert "'bj'" not in _ms_block and "bj:" in _ms_block, "mapState init shape changed"
+_n_keys = _ms_block.count(": ''")
+assert _n_keys >= 15, f"mapState init has only {_n_keys} empty states"
+html = html[:_ms] + _ms_block.replace(": ''", ": 'ready'") + html[_ms_end:]
+
+_dc = html.find("downloadCityMap(key) {")
+assert _dc != -1, "downloadCityMap not found"
+_depth = 0
+_j = _dc
+while _j < len(html):
+    _ch = html[_j]
+    if _ch == "{":
+        _depth += 1
+    elif _ch == "}":
+        _depth -= 1
+        if _depth == 0:
+            break
+    _j += 1
+assert _depth == 0, "downloadCityMap braces unbalanced"
+_dc_new = (
+    "downloadCityMap(key) {\n"
+    "\t\t\t\t\t\t// Android (strip): the native shell bundles every\n"
+    "\t\t\t\t\t\t// city's map as a raster, so a city switch never\n"
+    "\t\t\t\t\t\t// waits for the page-level SVG download. Kick the\n"
+    "\t\t\t\t\t\t// fetch off (it fills the page pane when it lands)\n"
+    "\t\t\t\t\t\t// and switch at once.\n"
+    "\t\t\t\t\t\tthis.ensureMap(key);\n"
+    "\t\t\t\t\t\tif (this.city !== key) this.switchCityKeepSettings(key);\n"
+    "\t\t\t\t\t\treturn Promise.resolve(true);\n"
+    "\t\t\t\t\t}"
+)
+html = html[:_dc] + _dc_new + html[_j + 1:]
+assert "Android (strip): the native shell bundles every" in html, "downloadCityMap patch missing"
+print("map downloads: all cities start 'ready', downloadCityMap non-blocking")
 
 # 9. Redemption code tables -> Android's own (see header, item 9).
 import json as _redeem_json

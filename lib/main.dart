@@ -119,11 +119,13 @@ const Map<String, List<String>> _cityNames = {
   'sjz': ['石家庄', '石家莊', 'Shijiazhuang'],
   'tj': ['天津', '天津', 'Tianjin'],
   'wx': ['无锡', '無錫', 'Wuxi'],
+  'ly': ['洛阳', '洛陽', 'Luoyang'],
+  'gz': ['广州', '廣州', 'Guangzhou'],
 };
 
 const List<String> _searchLabels = ['搜车站', '搜車站', 'Search stations'];
-const List<String> _startLabels = ['设为起点', '設為起點', 'Set as start'];
-const List<String> _destLabels = ['设为终点', '設為終點', 'Set as destination'];
+const List<String> _startLabels = ['设为出发站', '設為出發站', 'Set as start'];
+const List<String> _destLabels = ['设为到达站', '設為到達站', 'Set as destination'];
 
 const Map<String, Color> _cityAccents = {
   'bj': Color(0xFF003380),
@@ -141,6 +143,8 @@ const Map<String, Color> _cityAccents = {
   'sjz': Color(0xFFE53E30),
   'tj': Color(0xFFCB333B), // 天津 (.tj-theme accent in template.html)
   'wx': Color(0xFFEE2737), // 无锡 (.wx-theme accent in template.html)
+  'ly': Color(0xFFC4608C), // 洛阳 (.ly-theme accent in template.html)
+  'gz': Color(0xFFBBA32E), // 广州 (.gz-theme button accent in template.html)
 };
 
 // Transit-app store jump: the web page's openTransitApp() knows each
